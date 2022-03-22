@@ -1,0 +1,7 @@
+_target_: src.datamodules.colon_datamodule.ColonDataModule
+
+data_dir: ${data_dir} # data_dir is specified in config.yaml
+batch_size: 16
+num_workers: 4
+pin_memory: False
+img_size: 384

@@ -1,0 +1,44 @@
+_target_: src.models.colon_module2.ColonLitModule
+
+name: vit_large_r50_s32_384
+
+# only input 224
+
+#['vit_base_patch16_224',
+# 'vit_base_patch32_224',
+# 'vit_large_patch16_224',
+# 'vit_large_r50_s32_224',
+# 'vit_small_patch16_224',
+# 'vit_small_patch32_224',
+# 'vit_small_r26_s32_224',
+# 'vit_tiny_patch16_224',
+# 'vit_tiny_r_s16_p8_224']
+
+
+# only input 384
+
+#['vit_base_patch16_384',
+# 'vit_base_patch32_384',
+# 'vit_base_r50_s16_384',
+# 'vit_large_patch16_384',
+# 'vit_large_patch32_384',
+# 'vit_large_r50_s32_384',
+# 'vit_small_patch16_384',
+# 'vit_small_patch32_384',
+# 'vit_small_r26_s32_384',
+# 'vit_tiny_patch16_384',
+# 'vit_tiny_r_s16_p8_384']
+
+
+lr: 1e-4
+weight_decay: 0.0005
+t_max: 10
+min_lr: 1e-6
+T_0: 15
+T_mult: 2
+eta_min: 1e-6
+pretrained: True
+scheduler: 'CosineAnnealingLR'
+factor: 0.5
+patience: 3
+loss_weight: 0.1

@@ -3,9 +3,10 @@
 # specify here default evaluation configuration
 defaults:
   - _self_
-  - datamodule: mnist.yaml # choose the datamodule for evaluation
-  - model: mnist.yaml
-  - callbacks: null
+  - datamodule: colon.yaml # choose the datamodule for evaluation
+  - model: colon.yaml
+  - callbacks: wandb.yaml
+#  - logger: wandb.yaml
   - logger: null
   - trainer: default.yaml
   - log_dir: evaluation.yaml
@@ -24,9 +25,9 @@ print_config: True
 
 ignore_warnings: True
 
-seed: null
+seed: 42
 
 name: "default"
 
 # passing checkpoint path is necessary
-ckpt_path: ???
+ckpt_path: "/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt"

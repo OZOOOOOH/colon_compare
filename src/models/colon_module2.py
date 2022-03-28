@@ -13,7 +13,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 import pandas as pd
 from src.datamodules.colon_datamodule import CustomDataset
-
+import copy
 
 class ColonLitModule(LightningModule):
     def __init__(
@@ -31,7 +31,9 @@ class ColonLitModule(LightningModule):
             factor=0.5,
             patience=5,
             eps=1e-08,
-            loss_weight=0.5
+            loss_weight=0.5,
+            prob=0.8,
+            num_sample=10,
 
     ):
         super(ColonLitModule, self).__init__()
@@ -105,39 +107,14 @@ class ColonLitModule(LightningModule):
         comparison = torch.tensor(comparison, device=self.device)
         return indices, comparison, shuffle_y
 
-    def step(self, batch):
-        x, y = batch
-        # logits = self.forward(x)
-        features = self.model.forward_features(x.float())
-        # logits = self.model.head(features)
-        logits = self.discriminator_layer1(features)
-        loss = self.criterion(logits, y)
-        preds = torch.argmax(logits, dim=1)
-
-        indices, comparison, shuffle_y = self.shuffle(x, y)
-        shuffle_features = [features[i] for i in indices]
-        shuffle_features = torch.stack(shuffle_features, dim=0)
-        # size of shuffle_feature is [16, 768]
-
-        concat_features = torch.cat((features, shuffle_features), dim=1)
-
-        logits_compare = self.discriminator_layer2(concat_features)
-        # logits_compare = self.compare_layer(concat_features)
-        loss_compare = self.criterion(logits_compare, comparison)
-        preds_compare = torch.argmax(logits_compare, dim=1)
-
-        losses = loss + loss_compare * self.hparams.loss_weight
-
-        return losses, preds, y, preds_compare, comparison
-
     def bring_trained_data(self):
         self.trainer.datamodule.setup()
         train_img_path = self.trainer.datamodule.train_dataloader().dataset.image_id
         train_img_labels = self.trainer.datamodule.train_dataloader().dataset.labels
-        random_idx_label0 = np.random.choice(np.where(train_img_labels == 0)[0], 10, replace=False)
-        random_idx_label1 = np.random.choice(np.where(train_img_labels == 1)[0], 10, replace=False)
-        random_idx_label2 = np.random.choice(np.where(train_img_labels == 2)[0], 10, replace=False)
-        random_idx_label3 = np.random.choice(np.where(train_img_labels == 3)[0], 10, replace=False)
+        random_idx_label0 = np.random.choice(np.where(train_img_labels == 0)[0], self.hparams.num_sample, replace=False)
+        random_idx_label1 = np.random.choice(np.where(train_img_labels == 1)[0], self.hparams.num_sample, replace=False)
+        random_idx_label2 = np.random.choice(np.where(train_img_labels == 2)[0], self.hparams.num_sample, replace=False)
+        random_idx_label3 = np.random.choice(np.where(train_img_labels == 3)[0], self.hparams.num_sample, replace=False)
 
         random_10_train_path0 = train_img_path[random_idx_label0]
         random_10_train_path1 = train_img_path[random_idx_label1]
@@ -207,6 +184,33 @@ class ColonLitModule(LightningModule):
         return next(iter(dataloader_0)), next(iter(dataloader_1)), next(iter(dataloader_2)), next(
             iter(dataloader_3)), next(iter(all_dataloader))
 
+    def step(self, batch):
+        x, y = batch
+        # logits = self.forward(x)
+        features = self.model.forward_features(x.float())
+        # logits = self.model.head(features)
+        logits = self.discriminator_layer1(features)
+        loss = self.criterion(logits, y)
+        preds = torch.argmax(logits, dim=1)
+
+        indices, comparison, shuffle_y = self.shuffle(x, y)
+        shuffle_features = [features[i] for i in indices]
+        shuffle_features = torch.stack(shuffle_features, dim=0)
+        # size of shuffle_feature is [16, 768]
+
+        concat_features = torch.cat((features, shuffle_features), dim=1)
+
+        logits_compare = self.discriminator_layer2(concat_features)
+        # logits_compare = self.compare_layer(concat_features)
+        loss_compare = self.criterion(logits_compare, comparison)
+        preds_compare = torch.argmax(logits_compare, dim=1)
+
+        losses = loss + loss_compare * self.hparams.loss_weight
+
+        return losses, preds, y, preds_compare, comparison
+
+
+
     def step_test(self, batch):
         x, y = batch
         features = self.model.forward_features(x.float())
@@ -231,6 +235,7 @@ class ColonLitModule(LightningModule):
         return losses, logits, logits_compare, preds, preds_compare, comparison, y, shuffle_y
 
     def compare_func(self, idx, features, imgs, labels):
+        # compare trained and test labels
         result_list = []
         for img, label in zip(imgs, labels):
             trained_features = self.model.forward_features(img.unsqueeze(0).float())
@@ -241,15 +246,14 @@ class ColonLitModule(LightningModule):
         return result_list
 
     def step_test2(self, batch):
-        x, y = batch
-        features = self.model.forward_features(x.float())
-        logits = self.discriminator_layer1(features)
-        loss = self.criterion(logits, y)
-        preds = torch.argmax(logits, dim=1)
-        probs = torch.softmax(logits, dim=1)
-        max_probs = torch.max(probs, 1)
-
-        # if preds<0.8:
+        test_x, test_y = batch
+        test_4cls_features = self.model.forward_features(test_x.float())
+        test_4cls_logits = self.discriminator_layer1(test_4cls_features)
+        test_4cls_loss = self.criterion(test_4cls_logits, test_y)
+        test_4cls_preds = torch.argmax(test_4cls_logits, dim=1)
+        test_4cls_probs = torch.softmax(test_4cls_logits, dim=1)
+        test_4cls_max_probs = torch.max(test_4cls_probs, 1)
+        test_4cls_origin_preds = copy.deepcopy(test_4cls_preds)
 
         batch0, batch1, batch2, batch3, all_batch = self.bring_trained_data()
         imgs_0, labels_0 = batch0
@@ -257,24 +261,26 @@ class ColonLitModule(LightningModule):
         imgs_2, labels_2 = batch2
         imgs_3, labels_3 = batch3
         # all_imgs, all_labels = all_batch
-        labels_0 = labels_0.type_as(y)
-        labels_1 = labels_1.type_as(y)
-        labels_2 = labels_2.type_as(y)
-        labels_3 = labels_3.type_as(y)
+        labels_0 = labels_0.type_as(test_y)
+        labels_1 = labels_1.type_as(test_y)
+        labels_2 = labels_2.type_as(test_y)
+        labels_3 = labels_3.type_as(test_y)
         # all_labels = all_labels.type_as(y)
-        imgs_0 = imgs_0.type_as(x)
-        imgs_1 = imgs_1.type_as(x)
-        imgs_2 = imgs_2.type_as(x)
-        imgs_3 = imgs_3.type_as(x)
+        imgs_0 = imgs_0.type_as(test_x)
+        imgs_1 = imgs_1.type_as(test_x)
+        imgs_2 = imgs_2.type_as(test_x)
+        imgs_3 = imgs_3.type_as(test_x)
         # all_imgs = all_imgs.type_as(x)
+        # bring data from train loader and convert to tensor
 
 
-        for idx, prob in enumerate(max_probs.values):
-            if prob < 0.8:
-                result_0 = self.compare_func(idx, features, imgs_0, labels_0)
-                result_1 = self.compare_func(idx, features, imgs_1, labels_1)
-                result_2 = self.compare_func(idx, features, imgs_2, labels_2)
-                result_3 = self.compare_func(idx, features, imgs_3, labels_3)
+        for idx, prob in enumerate(test_4cls_max_probs.values):
+            if prob < self.hparams.prob:
+                #self.hparams.prob is a threshold (prob)
+                result_0 = self.compare_func(idx, test_4cls_features, imgs_0, labels_0)
+                result_1 = self.compare_func(idx, test_4cls_features, imgs_1, labels_1)
+                result_2 = self.compare_func(idx, test_4cls_features, imgs_2, labels_2)
+                result_3 = self.compare_func(idx, test_4cls_features, imgs_3, labels_3)
 
                 result_0 = torch.cat(result_0, dim=0)
                 result_1 = torch.cat(result_1, dim=0)
@@ -285,33 +291,57 @@ class ColonLitModule(LightningModule):
                 most_frequent_1 = torch.mode(result_1).values
                 most_frequent_2 = torch.mode(result_2).values
                 most_frequent_3 = torch.mode(result_3).values
+                # print()
+                # print(f'most_0: {most_frequent_0} // Number of most frequent: {sum(result_0 == most_frequent_0)}')
+                # print(f'most_1: {most_frequent_1} // Number of most frequent: {sum(result_1 == most_frequent_1)}')
+                # print(f'most_2: {most_frequent_2} // Number of most frequent: {sum(result_2 == most_frequent_2)}')
+                # print(f'most_3: {most_frequent_3} // Number of most frequent: {sum(result_3 == most_frequent_3)}')
+                # print()
+                # print(f'True    label : {y[idx]}')
+                # print(f'Predict label : {preds[idx]}')
+                # print(f'Prob          : {prob}')
+                # print('####################')
 
-                print()
-                print(f'most_0: {most_frequent_0} // Number of most frequent: {sum(result_0 == most_frequent_0)}')
-                print(f'most_1: {most_frequent_1} // Number of most frequent: {sum(result_1 == most_frequent_1)}')
-                print(f'most_2: {most_frequent_2} // Number of most frequent: {sum(result_2 == most_frequent_2)}')
-                print(f'most_3: {most_frequent_3} // Number of most frequent: {sum(result_3 == most_frequent_3)}')
-                print()
-                print(f'True    label : {y[idx]}')
-                print(f'Predict label : {preds[idx]}')
-                print('####################')
+                if (most_frequent_1 == 1 & most_frequent_2 == 1):
+                    if sum(result_1 == most_frequent_1) < sum(result_2 == most_frequent_2):
+                        test_4cls_preds[idx] = torch.Tensor([2]).type_as(test_y)
+                    else:
+                        test_4cls_preds[idx] = torch.Tensor([1]).type_as(test_y)
+                elif (most_frequent_2 == 1 & most_frequent_3 == 1):
+                    if sum(result_2 == most_frequent_2) > sum(result_3 == most_frequent_3):
+                        test_4cls_preds[idx] = torch.Tensor([2]).type_as(test_y)
+                    else:
+                        test_4cls_preds[idx] = torch.Tensor([3]).type_as(test_y)
+                elif most_frequent_0 == 1:
+                    test_4cls_preds[idx] = torch.Tensor([0]).type_as(test_y)
+                elif most_frequent_1 == 1:
+                    test_4cls_preds[idx] = torch.Tensor([1]).type_as(test_y)
+                elif most_frequent_2 == 1:
+                    test_4cls_preds[idx] = torch.Tensor([2]).type_as(test_y)
+                elif most_frequent_3 == 1:
+                    test_4cls_preds[idx] = torch.Tensor([3]).type_as(test_y)
 
-                # if most_2==1 & most_3==1:
+        new_preds = test_4cls_preds
 
-        indices, comparison, shuffle_y = self.shuffle(x, y)
-        shuffle_features = [features[i] for i in indices]
-        shuffle_features = torch.stack(shuffle_features, dim=0)
+        cnt_diff=sum(x != y for x, y in zip(test_4cls_origin_preds, new_preds))
+        print(f'length of preds : {len(test_4cls_origin_preds)} //The number of changed : {cnt_diff}')
+
+        # indices, comparison, shuffle_y = self.shuffle(x, y)
+        # shuffle_features = [features[i] for i in indices]
+        # shuffle_features = torch.stack(shuffle_features, dim=0)
         # size of shuffle_feature is [16, 768]
 
-        concat_features = torch.cat((features, shuffle_features), dim=1)
+        # concat_features = torch.cat((features, shuffle_features), dim=1)
 
-        logits_compare = self.discriminator_layer2(concat_features)
-        loss_compare = self.criterion(logits_compare, comparison)
-        preds_compare = torch.argmax(logits_compare, dim=1)
+        # logits_compare = self.discriminator_layer2(concat_features)
+        # loss_compare = self.criterion(logits_compare, comparison)
+        # preds_compare = torch.argmax(logits_compare, dim=1)
 
-        losses = loss + loss_compare * self.hparams.loss_weight
+        # losses = loss + loss_compare * self.hparams.loss_weight
+        losses = test_4cls_loss
 
-        return losses, logits, logits_compare, preds, preds_compare, comparison, y, shuffle_y
+        return losses, test_4cls_logits, test_4cls_origin_preds, new_preds, test_y , cnt_diff
+        # return losses, logits, logits_compare, preds, preds_compare, comparison, y, shuffle_y
 
     def training_step(self, batch, batch_idx):
         loss, preds, targets, preds_compare, comparison = self.step(batch)
@@ -392,19 +422,18 @@ class ColonLitModule(LightningModule):
         self.log("val/acc_compare_best", self.val_acc_compare_best.compute(), on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
-        loss, logits, logits_compare, preds, preds_compare, comparison, targets, targets_shuffle = self.step_test2(
-            batch)
+        # loss, logits, logits_compare, preds, preds_compare, comparison, targets, targets_shuffle = self.step_test2(batch)
+        loss, logits, origin_preds, new_preds, targets, cnt_diff = self.step_test2(batch)
 
         probs = torch.softmax(logits, dim=1)
-        probs_compare = torch.softmax(logits_compare, dim=1)
+        # probs_compare = torch.softmax(logits_compare, dim=1)
 
-        diff_idx = [index for index, elem in enumerate(preds)
-                    if elem != targets[index]]
-        diff_idx_compare = [index for index, elem in enumerate(preds_compare)
-                            if elem != comparison[index]]
-        same_idx = [index for index, elem in enumerate(preds)
-                    if elem == targets[index]]
-
+        # diff_idx = [index for index, elem in enumerate(preds)
+        #             if elem != targets[index]]
+        # diff_idx_compare = [index for index, elem in enumerate(preds_compare)
+        #                     if elem != comparison[index]]
+        # same_idx = [index for index, elem in enumerate(preds)
+        #             if elem == targets[index]]
         # for i in diff_idx:
         #     if i in diff_idx_compare:
         #         continue
@@ -414,356 +443,358 @@ class ColonLitModule(LightningModule):
         # if len(probs[diff_idx])!=0:
         #     print("False probs:", probs[diff_idx])
         #     print("Max prob:", torch.max(probs[diff_idx], 1))
-        cnt_90_0 = 0
-        cnt_90_1 = 0
-        cnt_90_2 = 0
-        cnt_90_3 = 0
-
-        cnt_80_0 = 0
-        cnt_80_1 = 0
-        cnt_80_2 = 0
-        cnt_80_3 = 0
-
-        cnt_70_0 = 0
-        cnt_70_1 = 0
-        cnt_70_2 = 0
-        cnt_70_3 = 0
-
-        cnt_60_0 = 0
-        cnt_60_1 = 0
-        cnt_60_2 = 0
-        cnt_60_3 = 0
-
-        cnt_50_0 = 0
-        cnt_50_1 = 0
-        cnt_50_2 = 0
-        cnt_50_3 = 0
-
-        cnt_other_0 = 0
-        cnt_other_1 = 0
-        cnt_other_2 = 0
-        cnt_other_3 = 0
-
-        t0_p1_90 = 0
-        t0_p2_90 = 0
-        t0_p3_90 = 0
-        t1_p0_90 = 0
-        t1_p2_90 = 0
-        t1_p3_90 = 0
-        t2_p0_90 = 0
-        t2_p1_90 = 0
-        t2_p3_90 = 0
-        t3_p0_90 = 0
-        t3_p1_90 = 0
-        t3_p2_90 = 0
-        t0_p1_80 = 0
-        t0_p2_80 = 0
-        t0_p3_80 = 0
-        t1_p0_80 = 0
-        t1_p2_80 = 0
-        t1_p3_80 = 0
-        t2_p0_80 = 0
-        t2_p1_80 = 0
-        t2_p3_80 = 0
-        t3_p0_80 = 0
-        t3_p1_80 = 0
-        t3_p2_80 = 0
-        t0_p1_70 = 0
-        t0_p2_70 = 0
-        t0_p3_70 = 0
-        t1_p0_70 = 0
-        t1_p2_70 = 0
-        t1_p3_70 = 0
-        t2_p0_70 = 0
-        t2_p1_70 = 0
-        t2_p3_70 = 0
-        t3_p0_70 = 0
-        t3_p1_70 = 0
-        t3_p2_70 = 0
+        # cnt_90_0 = 0
+        # cnt_90_1 = 0
+        # cnt_90_2 = 0
+        # cnt_90_3 = 0
         #
-        t0_p1_60 = 0
-        t0_p2_60 = 0
-        t0_p3_60 = 0
+        # cnt_80_0 = 0
+        # cnt_80_1 = 0
+        # cnt_80_2 = 0
+        # cnt_80_3 = 0
+        #
+        # cnt_70_0 = 0
+        # cnt_70_1 = 0
+        # cnt_70_2 = 0
+        # cnt_70_3 = 0
+        #
+        # cnt_60_0 = 0
+        # cnt_60_1 = 0
+        # cnt_60_2 = 0
+        # cnt_60_3 = 0
+        #
+        # cnt_50_0 = 0
+        # cnt_50_1 = 0
+        # cnt_50_2 = 0
+        # cnt_50_3 = 0
+        #
+        # cnt_other_0 = 0
+        # cnt_other_1 = 0
+        # cnt_other_2 = 0
+        # cnt_other_3 = 0
+        #
+        # t0_p1_90 = 0
+        # t0_p2_90 = 0
+        # t0_p3_90 = 0
+        # t1_p0_90 = 0
+        # t1_p2_90 = 0
+        # t1_p3_90 = 0
+        # t2_p0_90 = 0
+        # t2_p1_90 = 0
+        # t2_p3_90 = 0
+        # t3_p0_90 = 0
+        # t3_p1_90 = 0
+        # t3_p2_90 = 0
+        # t0_p1_80 = 0
+        # t0_p2_80 = 0
+        # t0_p3_80 = 0
+        # t1_p0_80 = 0
+        # t1_p2_80 = 0
+        # t1_p3_80 = 0
+        # t2_p0_80 = 0
+        # t2_p1_80 = 0
+        # t2_p3_80 = 0
+        # t3_p0_80 = 0
+        # t3_p1_80 = 0
+        # t3_p2_80 = 0
+        # t0_p1_70 = 0
+        # t0_p2_70 = 0
+        # t0_p3_70 = 0
+        # t1_p0_70 = 0
+        # t1_p2_70 = 0
+        # t1_p3_70 = 0
+        # t2_p0_70 = 0
+        # t2_p1_70 = 0
+        # t2_p3_70 = 0
+        # t3_p0_70 = 0
+        # t3_p1_70 = 0
+        # t3_p2_70 = 0
+        # #
+        # t0_p1_60 = 0
+        # t0_p2_60 = 0
+        # t0_p3_60 = 0
+        #
+        # t1_p0_60 = 0
+        # t1_p2_60 = 0
+        # t1_p3_60 = 0
+        #
+        # t2_p0_60 = 0
+        # t2_p1_60 = 0
+        # t2_p3_60 = 0
+        #
+        # t3_p0_60 = 0
+        # t3_p1_60 = 0
+        # t3_p2_60 = 0
+        #
+        # t0_p1_50 = 0
+        # t0_p2_50 = 0
+        # t0_p3_50 = 0
+        #
+        # t1_p0_50 = 0
+        # t1_p2_50 = 0
+        # t1_p3_50 = 0
+        #
+        # t2_p0_50 = 0
+        # t2_p1_50 = 0
+        # t2_p3_50 = 0
+        #
+        # t3_p0_50 = 0
+        # t3_p1_50 = 0
+        # t3_p2_50 = 0
+        #
+        # t0_p1_other = 0
+        # t0_p2_other = 0
+        # t0_p3_other = 0
+        #
+        # t1_p0_other = 0
+        # t1_p2_other = 0
+        # t1_p3_other = 0
+        #
+        # t2_p0_other = 0
+        # t2_p1_other = 0
+        # t2_p3_other = 0
+        #
+        # t3_p0_other = 0
+        # t3_p1_other = 0
+        # t3_p2_other = 0
+        #
+        # if len(probs[same_idx]) != 0:
+        #     for i, j, k in zip(torch.max(probs[same_idx], 1).values, torch.max(probs[same_idx], 1).indices,
+        #                        targets[same_idx]):
+        #         if i > 0.9:
+        #             if j == 0:
+        #                 cnt_90_0 += 1
+        #                 if k == 1:
+        #                     t1_p0_90 += 1
+        #                 elif k == 2:
+        #                     t2_p0_90 += 1
+        #                 elif k == 3:
+        #                     t3_p0_90 += 1
+        #
+        #             elif j == 1:
+        #                 cnt_90_1 += 1
+        #                 if k == 0:
+        #                     t0_p1_90 += 1
+        #                 elif k == 2:
+        #                     t2_p1_90 += 1
+        #                 elif k == 3:
+        #                     t3_p1_90 += 1
+        #             elif j == 2:
+        #                 cnt_90_2 += 1
+        #                 if k == 0:
+        #                     t0_p2_90 += 1
+        #                 elif k == 1:
+        #                     t1_p2_90 += 1
+        #                 elif k == 3:
+        #                     t3_p2_90 += 1
+        #             elif j == 3:
+        #                 cnt_90_3 += 1
+        #                 if k == 0:
+        #                     t0_p3_90 += 1
+        #                 elif k == 1:
+        #                     t1_p3_90 += 1
+        #                 elif k == 2:
+        #                     t2_p3_90 += 1
+        #         elif i > 0.8:
+        #             if j == 0:
+        #                 cnt_80_0 += 1
+        #                 if k == 1:
+        #                     t1_p0_80 += 1
+        #                 elif k == 2:
+        #                     t2_p0_80 += 1
+        #                 elif k == 3:
+        #                     t3_p0_80 += 1
+        #
+        #             elif j == 1:
+        #                 cnt_80_1 += 1
+        #                 if k == 0:
+        #                     t0_p1_80 += 1
+        #                 elif k == 2:
+        #                     t2_p1_80 += 1
+        #                 elif k == 3:
+        #                     t3_p1_80 += 1
+        #
+        #             elif j == 2:
+        #                 cnt_80_2 += 1
+        #                 if k == 0:
+        #                     t0_p2_80 += 1
+        #                 elif k == 1:
+        #                     t1_p2_80 += 1
+        #                 elif k == 3:
+        #                     t3_p2_80 += 1
+        #
+        #             elif j == 3:
+        #                 cnt_80_3 += 1
+        #                 if k == 0:
+        #                     t0_p3_80 += 1
+        #                 elif k == 1:
+        #                     t1_p3_80 += 1
+        #                 elif k == 2:
+        #                     t2_p3_80 += 1
+        #
+        #         elif i > 0.7:
+        #             if j == 0:
+        #                 cnt_70_0 += 1
+        #                 if k == 1:
+        #                     t1_p0_70 += 1
+        #                 elif k == 2:
+        #                     t2_p0_70 += 1
+        #                 elif k == 3:
+        #                     t3_p0_70 += 1
+        #
+        #             elif j == 1:
+        #                 cnt_70_1 += 1
+        #                 if k == 0:
+        #                     t0_p1_70 += 1
+        #                 elif k == 2:
+        #                     t2_p1_70 += 1
+        #                 elif k == 3:
+        #                     t3_p1_70 += 1
+        #
+        #
+        #             elif j == 2:
+        #                 cnt_70_2 += 1
+        #                 if k == 0:
+        #                     t0_p2_70 += 1
+        #                 elif k == 1:
+        #                     t1_p2_70 += 1
+        #                 elif k == 3:
+        #                     t3_p2_70 += 1
+        #             elif j == 3:
+        #                 cnt_70_3 += 1
+        #                 if k == 0:
+        #                     t0_p3_70 += 1
+        #                 elif k == 1:
+        #                     t1_p3_70 += 1
+        #                 elif k == 2:
+        #                     t2_p3_70 += 1
+        #         elif i > 0.6:
+        #
+        #             if j == 0:
+        #                 cnt_60_0 += 1
+        #                 if k == 1:
+        #                     t1_p0_60 += 1
+        #                 elif k == 2:
+        #                     t2_p0_60 += 1
+        #                 elif k == 3:
+        #                     t3_p0_60 += 1
+        #
+        #             elif j == 1:
+        #                 cnt_60_1 += 1
+        #                 if k == 0:
+        #                     t0_p1_60 += 1
+        #                 elif k == 2:
+        #                     t2_p1_60 += 1
+        #                 elif k == 3:
+        #                     t3_p1_60 += 1
+        #
+        #
+        #             elif j == 2:
+        #                 cnt_60_2 += 1
+        #                 if k == 0:
+        #                     t0_p2_60 += 1
+        #                 elif k == 1:
+        #                     t1_p2_60 += 1
+        #                 elif k == 3:
+        #                     t3_p2_60 += 1
+        #             elif j == 3:
+        #                 cnt_60_3 += 1
+        #                 if k == 0:
+        #                     t0_p3_60 += 1
+        #                 elif k == 1:
+        #                     t1_p3_60 += 1
+        #                 elif k == 2:
+        #                     t2_p3_60 += 1
+        #
+        #         elif i > 0.5:
+        #             if j == 0:
+        #                 cnt_50_0 += 1
+        #                 if k == 1:
+        #                     t1_p0_50 += 1
+        #                 elif k == 2:
+        #                     t2_p0_50 += 1
+        #                 elif k == 3:
+        #                     t3_p0_50 += 1
+        #
+        #             elif j == 1:
+        #                 cnt_50_1 += 1
+        #                 if k == 0:
+        #                     t0_p1_50 += 1
+        #                 elif k == 2:
+        #                     t2_p1_50 += 1
+        #                 elif k == 3:
+        #                     t3_p1_50 += 1
+        #
+        #
+        #             elif j == 2:
+        #                 cnt_50_2 += 1
+        #                 if k == 0:
+        #                     t0_p2_50 += 1
+        #                 elif k == 1:
+        #                     t1_p2_50 += 1
+        #                 elif k == 3:
+        #                     t3_p2_50 += 1
+        #             elif j == 3:
+        #                 cnt_50_3 += 1
+        #                 if k == 0:
+        #                     t0_p3_50 += 1
+        #                 elif k == 1:
+        #                     t1_p3_50 += 1
+        #                 elif k == 2:
+        #                     t2_p3_50 += 1
+        #         else:
+        #             if j == 0:
+        #                 cnt_other_0 += 1
+        #                 if k == 1:
+        #                     t1_p0_other += 1
+        #                 elif k == 2:
+        #                     t2_p0_other += 1
+        #                 elif k == 3:
+        #                     t3_p0_other += 1
+        #
+        #             elif j == 1:
+        #                 cnt_other_1 += 1
+        #                 if k == 0:
+        #                     t0_p1_other += 1
+        #                 elif k == 2:
+        #                     t2_p1_other += 1
+        #                 elif k == 3:
+        #                     t3_p1_other += 1
+        #
+        #
+        #             elif j == 2:
+        #                 cnt_other_2 += 1
+        #                 if k == 0:
+        #                     t0_p2_other += 1
+        #                 elif k == 1:
+        #                     t1_p2_other += 1
+        #                 elif k == 3:
+        #                     t3_p2_other += 1
+        #             elif j == 3:
+        #                 cnt_other_3 += 1
+        #                 if k == 0:
+        #                     t0_p3_other += 1
+        #                 elif k == 1:
+        #                     t1_p3_other += 1
+        #                 elif k == 2:
+        #                     t2_p3_other += 1
+        # cnt_90 = []
+        # cnt_80 = []
+        # cnt_70 = []
+        # cnt_60 = []
+        # cnt_50 = []
+        # cnt_other = []
+        # cnt_90.extend((cnt_90_0, cnt_90_1, cnt_90_2, cnt_90_3))
+        # cnt_80.extend((cnt_80_0, cnt_80_1, cnt_80_2, cnt_80_3))
+        # cnt_70.extend((cnt_70_0, cnt_70_1, cnt_70_2, cnt_70_3))
+        # cnt_60.extend((cnt_60_0, cnt_60_1, cnt_60_2, cnt_60_3))
+        # cnt_50.extend((cnt_50_0, cnt_50_1, cnt_50_2, cnt_50_3))
+        # cnt_other.extend((cnt_other_0, cnt_other_1, cnt_other_2, cnt_other_3))
 
-        t1_p0_60 = 0
-        t1_p2_60 = 0
-        t1_p3_60 = 0
+        origin_acc = self.test_acc(origin_preds, targets)
+        new_acc = self.test_acc(new_preds, targets)
 
-        t2_p0_60 = 0
-        t2_p1_60 = 0
-        t2_p3_60 = 0
-
-        t3_p0_60 = 0
-        t3_p1_60 = 0
-        t3_p2_60 = 0
-
-        t0_p1_50 = 0
-        t0_p2_50 = 0
-        t0_p3_50 = 0
-
-        t1_p0_50 = 0
-        t1_p2_50 = 0
-        t1_p3_50 = 0
-
-        t2_p0_50 = 0
-        t2_p1_50 = 0
-        t2_p3_50 = 0
-
-        t3_p0_50 = 0
-        t3_p1_50 = 0
-        t3_p2_50 = 0
-
-        t0_p1_other = 0
-        t0_p2_other = 0
-        t0_p3_other = 0
-
-        t1_p0_other = 0
-        t1_p2_other = 0
-        t1_p3_other = 0
-
-        t2_p0_other = 0
-        t2_p1_other = 0
-        t2_p3_other = 0
-
-        t3_p0_other = 0
-        t3_p1_other = 0
-        t3_p2_other = 0
-
-        if len(probs[same_idx]) != 0:
-            for i, j, k in zip(torch.max(probs[same_idx], 1).values, torch.max(probs[same_idx], 1).indices,
-                               targets[same_idx]):
-                if i > 0.9:
-                    if j == 0:
-                        cnt_90_0 += 1
-                        if k == 1:
-                            t1_p0_90 += 1
-                        elif k == 2:
-                            t2_p0_90 += 1
-                        elif k == 3:
-                            t3_p0_90 += 1
-
-                    elif j == 1:
-                        cnt_90_1 += 1
-                        if k == 0:
-                            t0_p1_90 += 1
-                        elif k == 2:
-                            t2_p1_90 += 1
-                        elif k == 3:
-                            t3_p1_90 += 1
-                    elif j == 2:
-                        cnt_90_2 += 1
-                        if k == 0:
-                            t0_p2_90 += 1
-                        elif k == 1:
-                            t1_p2_90 += 1
-                        elif k == 3:
-                            t3_p2_90 += 1
-                    elif j == 3:
-                        cnt_90_3 += 1
-                        if k == 0:
-                            t0_p3_90 += 1
-                        elif k == 1:
-                            t1_p3_90 += 1
-                        elif k == 2:
-                            t2_p3_90 += 1
-                elif i > 0.8:
-                    if j == 0:
-                        cnt_80_0 += 1
-                        if k == 1:
-                            t1_p0_80 += 1
-                        elif k == 2:
-                            t2_p0_80 += 1
-                        elif k == 3:
-                            t3_p0_80 += 1
-
-                    elif j == 1:
-                        cnt_80_1 += 1
-                        if k == 0:
-                            t0_p1_80 += 1
-                        elif k == 2:
-                            t2_p1_80 += 1
-                        elif k == 3:
-                            t3_p1_80 += 1
-
-                    elif j == 2:
-                        cnt_80_2 += 1
-                        if k == 0:
-                            t0_p2_80 += 1
-                        elif k == 1:
-                            t1_p2_80 += 1
-                        elif k == 3:
-                            t3_p2_80 += 1
-
-                    elif j == 3:
-                        cnt_80_3 += 1
-                        if k == 0:
-                            t0_p3_80 += 1
-                        elif k == 1:
-                            t1_p3_80 += 1
-                        elif k == 2:
-                            t2_p3_80 += 1
-
-                elif i > 0.7:
-                    if j == 0:
-                        cnt_70_0 += 1
-                        if k == 1:
-                            t1_p0_70 += 1
-                        elif k == 2:
-                            t2_p0_70 += 1
-                        elif k == 3:
-                            t3_p0_70 += 1
-
-                    elif j == 1:
-                        cnt_70_1 += 1
-                        if k == 0:
-                            t0_p1_70 += 1
-                        elif k == 2:
-                            t2_p1_70 += 1
-                        elif k == 3:
-                            t3_p1_70 += 1
-
-
-                    elif j == 2:
-                        cnt_70_2 += 1
-                        if k == 0:
-                            t0_p2_70 += 1
-                        elif k == 1:
-                            t1_p2_70 += 1
-                        elif k == 3:
-                            t3_p2_70 += 1
-                    elif j == 3:
-                        cnt_70_3 += 1
-                        if k == 0:
-                            t0_p3_70 += 1
-                        elif k == 1:
-                            t1_p3_70 += 1
-                        elif k == 2:
-                            t2_p3_70 += 1
-                elif i > 0.6:
-
-                    if j == 0:
-                        cnt_60_0 += 1
-                        if k == 1:
-                            t1_p0_60 += 1
-                        elif k == 2:
-                            t2_p0_60 += 1
-                        elif k == 3:
-                            t3_p0_60 += 1
-
-                    elif j == 1:
-                        cnt_60_1 += 1
-                        if k == 0:
-                            t0_p1_60 += 1
-                        elif k == 2:
-                            t2_p1_60 += 1
-                        elif k == 3:
-                            t3_p1_60 += 1
-
-
-                    elif j == 2:
-                        cnt_60_2 += 1
-                        if k == 0:
-                            t0_p2_60 += 1
-                        elif k == 1:
-                            t1_p2_60 += 1
-                        elif k == 3:
-                            t3_p2_60 += 1
-                    elif j == 3:
-                        cnt_60_3 += 1
-                        if k == 0:
-                            t0_p3_60 += 1
-                        elif k == 1:
-                            t1_p3_60 += 1
-                        elif k == 2:
-                            t2_p3_60 += 1
-
-                elif i > 0.5:
-                    if j == 0:
-                        cnt_50_0 += 1
-                        if k == 1:
-                            t1_p0_50 += 1
-                        elif k == 2:
-                            t2_p0_50 += 1
-                        elif k == 3:
-                            t3_p0_50 += 1
-
-                    elif j == 1:
-                        cnt_50_1 += 1
-                        if k == 0:
-                            t0_p1_50 += 1
-                        elif k == 2:
-                            t2_p1_50 += 1
-                        elif k == 3:
-                            t3_p1_50 += 1
-
-
-                    elif j == 2:
-                        cnt_50_2 += 1
-                        if k == 0:
-                            t0_p2_50 += 1
-                        elif k == 1:
-                            t1_p2_50 += 1
-                        elif k == 3:
-                            t3_p2_50 += 1
-                    elif j == 3:
-                        cnt_50_3 += 1
-                        if k == 0:
-                            t0_p3_50 += 1
-                        elif k == 1:
-                            t1_p3_50 += 1
-                        elif k == 2:
-                            t2_p3_50 += 1
-                else:
-                    if j == 0:
-                        cnt_other_0 += 1
-                        if k == 1:
-                            t1_p0_other += 1
-                        elif k == 2:
-                            t2_p0_other += 1
-                        elif k == 3:
-                            t3_p0_other += 1
-
-                    elif j == 1:
-                        cnt_other_1 += 1
-                        if k == 0:
-                            t0_p1_other += 1
-                        elif k == 2:
-                            t2_p1_other += 1
-                        elif k == 3:
-                            t3_p1_other += 1
-
-
-                    elif j == 2:
-                        cnt_other_2 += 1
-                        if k == 0:
-                            t0_p2_other += 1
-                        elif k == 1:
-                            t1_p2_other += 1
-                        elif k == 3:
-                            t3_p2_other += 1
-                    elif j == 3:
-                        cnt_other_3 += 1
-                        if k == 0:
-                            t0_p3_other += 1
-                        elif k == 1:
-                            t1_p3_other += 1
-                        elif k == 2:
-                            t2_p3_other += 1
-        cnt_90 = []
-        cnt_80 = []
-        cnt_70 = []
-        cnt_60 = []
-        cnt_50 = []
-        cnt_other = []
-        cnt_90.extend((cnt_90_0, cnt_90_1, cnt_90_2, cnt_90_3))
-        cnt_80.extend((cnt_80_0, cnt_80_1, cnt_80_2, cnt_80_3))
-        cnt_70.extend((cnt_70_0, cnt_70_1, cnt_70_2, cnt_70_3))
-        cnt_60.extend((cnt_60_0, cnt_60_1, cnt_60_2, cnt_60_3))
-        cnt_50.extend((cnt_50_0, cnt_50_1, cnt_50_2, cnt_50_3))
-        cnt_other.extend((cnt_other_0, cnt_other_1, cnt_other_2, cnt_other_3))
-
-        acc = self.test_acc(preds, targets)
-        acc_compare = self.test_acc_compare(preds_compare, comparison)
+        # acc_compare = self.test_acc_compare(preds_compare, comparison)
 
         # a=logits[diff_idx].tolist()
         # ax = sns.barplot(x=np.arange(len(a)), y=a)
@@ -776,47 +807,54 @@ class ColonLitModule(LightningModule):
         # self.log("test/logits_compare", logits_compare, on_step=True, on_epoch=False)
 
         self.log("test/loss", loss, on_step=False, on_epoch=True)
-        self.log("test/acc", acc, on_step=False, on_epoch=True)
-        self.log("test/acc_compare", acc_compare, on_step=False, on_epoch=True)
+        self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
+        self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
+        # self.log("test/acc_compare", acc_compare, on_step=False, on_epoch=True)
         # self.log_dict(logs, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
-        return {"loss": loss, "acc": acc, "preds": preds, "targets": targets, "acc_compare": preds_compare,
-                "preds_compare": preds_compare, "comparison": comparison,
-                "cnt_90": cnt_90, "cnt_80": cnt_80, "cnt_70": cnt_70, "cnt_60": cnt_60, "cnt_50": cnt_50,
-                "cnt_other": cnt_other
-                }
+        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets, "acc_compare": preds_compare,
+        #         "preds_compare": preds_compare, "comparison": comparison,
+        #         "cnt_90": cnt_90, "cnt_80": cnt_80, "cnt_70": cnt_70, "cnt_60": cnt_60, "cnt_50": cnt_50,
+        #         "cnt_other": cnt_other
+        #         }
+        return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds,
+                "new_preds": new_preds, "targets": targets, "cnt_diff": cnt_diff}
 
     def test_epoch_end(self, outputs):
+        # pass
+        cnt_diff = sum([i['cnt_diff'] for i in outputs])
         # cnt_90 = sum([i['cnt_90'] for i in outputs])
         # cnt_80 = sum([i['cnt_80'] for i in outputs])
         # cnt_70 = sum([i['cnt_70'] for i in outputs])
         # cnt_60 = sum([i['cnt_60'] for i in outputs])
         # cnt_50 = sum([i['cnt_50'] for i in outputs])
         # cnt_other = sum([i['cnt_other'] for i in outputs])
-        cnt_90 = np.array([i['cnt_90'] for i in outputs]).sum(axis=0)
-        cnt_80 = np.array([i['cnt_80'] for i in outputs]).sum(axis=0)
-        cnt_70 = np.array([i['cnt_70'] for i in outputs]).sum(axis=0)
-        cnt_60 = np.array([i['cnt_60'] for i in outputs]).sum(axis=0)
-        cnt_50 = np.array([i['cnt_50'] for i in outputs]).sum(axis=0)
-        cnt_other = np.array([i['cnt_other'] for i in outputs]).sum(axis=0)
-        print(f'cnt_90: {cnt_90}')
-        print(f'cnt_80: {cnt_80}')
-        print(f'cnt_70: {cnt_70}')
-        print(f'cnt_60: {cnt_60}')
-        print(f'cnt_50: {cnt_50}')
-        print(f'cnt_other: {cnt_other}')
-        cnt_90 = cnt_90.sum()
-        cnt_80 = cnt_80.sum()
-        cnt_70 = cnt_70.sum()
-        cnt_60 = cnt_60.sum()
-        cnt_50 = cnt_50.sum()
-        cnt_other = cnt_other.sum()
-        self.log("test/cnt_90", cnt_90, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_80", cnt_80, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_70", cnt_70, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_60", cnt_60, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_50", cnt_50, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_other", cnt_other, on_epoch=True, on_step=False, reduce_fx='sum')
+        # cnt_90 = np.array([i['cnt_90'] for i in outputs]).sum(axis=0)
+        # cnt_80 = np.array([i['cnt_80'] for i in outputs]).sum(axis=0)
+        # cnt_70 = np.array([i['cnt_70'] for i in outputs]).sum(axis=0)
+        # cnt_60 = np.array([i['cnt_60'] for i in outputs]).sum(axis=0)
+        # cnt_50 = np.array([i['cnt_50'] for i in outputs]).sum(axis=0)
+        # cnt_other = np.array([i['cnt_other'] for i in outputs]).sum(axis=0)
+        # print(f'cnt_90: {cnt_90}')
+        # print(f'cnt_80: {cnt_80}')
+        # print(f'cnt_70: {cnt_70}')
+        # print(f'cnt_60: {cnt_60}')
+        # print(f'cnt_50: {cnt_50}')
+        # print(f'cnt_other: {cnt_other}')
+        cnt_diff = cnt_diff.sum()
+        # cnt_90 = cnt_90.sum()
+        # cnt_80 = cnt_80.sum()
+        # cnt_70 = cnt_70.sum()
+        # cnt_60 = cnt_60.sum()
+        # cnt_50 = cnt_50.sum()
+        # cnt_other = cnt_other.sum()
+        # self.log("test/cnt_90", cnt_90, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_80", cnt_80, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_70", cnt_70, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_60", cnt_60, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_50", cnt_50, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_other", cnt_other, on_epoch=True, on_step=False, reduce_fx='sum')
+        self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
 
     def on_epoch_end(self):
         self.train_acc.reset()

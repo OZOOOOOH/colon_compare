@@ -14,6 +14,8 @@ from torch.utils.data import DataLoader
 import pandas as pd
 from src.datamodules.colon_datamodule import CustomDataset
 import copy
+from scipy.stats import entropy
+
 
 class ColonLitModule(LightningModule):
     def __init__(
@@ -40,9 +42,6 @@ class ColonLitModule(LightningModule):
         self.save_hyperparameters(logger=False)
 
         self.model = timm.create_model(self.hparams.name, pretrained=self.hparams.pretrained, num_classes=4)
-
-        # self.model = ViT(image_size=384, patch_size=16, num_classes=4, dim=768, depth=12, heads=12, mlp_dim=768 * 4,
-        #                  pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0.)
         self.compare_layer = nn.Linear(self.model.embed_dim * 2, 3)
         self.discriminator_layer1 = nn.Sequential(
             nn.Linear(self.model.embed_dim, 512),
@@ -138,8 +137,6 @@ class ColonLitModule(LightningModule):
         df_3 = pd.DataFrame({'path': random_10_train_path3,
                              'class': random_10_train_label3
                              })
-        all_df = pd.concat([df_0, df_1, df_2, df_3])
-
         dataloader_0 = DataLoader(
             CustomDataset(df_0, self.trainer.datamodule.train_transform),
             batch_size=10,
@@ -172,17 +169,9 @@ class ColonLitModule(LightningModule):
             drop_last=False,
             shuffle=False,
         )
-        all_dataloader = DataLoader(
-            CustomDataset(all_df, self.trainer.datamodule.train_transform),
-            batch_size=10,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=False,
-        )
 
         return next(iter(dataloader_0)), next(iter(dataloader_1)), next(iter(dataloader_2)), next(
-            iter(dataloader_3)), next(iter(all_dataloader))
+            iter(dataloader_3))
 
     def step(self, batch):
         x, y = batch
@@ -208,8 +197,6 @@ class ColonLitModule(LightningModule):
         losses = loss + loss_compare * self.hparams.loss_weight
 
         return losses, preds, y, preds_compare, comparison
-
-
 
     def step_test(self, batch):
         x, y = batch
@@ -239,8 +226,8 @@ class ColonLitModule(LightningModule):
         result_list = []
         for img, label in zip(imgs, labels):
             trained_features = self.model.forward_features(img.unsqueeze(0).float())
-            concat_with_trained_features = torch.cat((features[idx].unsqueeze(0), trained_features), dim=1)
-            logits_compare = self.discriminator_layer2(concat_with_trained_features)
+            concat_test_with_trained_features = torch.cat((features[idx].unsqueeze(0), trained_features), dim=1)
+            logits_compare = self.discriminator_layer2(concat_test_with_trained_features)
             pred = torch.argmax(logits_compare, dim=1)
             result_list.append(pred)
         return result_list
@@ -255,76 +242,98 @@ class ColonLitModule(LightningModule):
         test_4cls_max_probs = torch.max(test_4cls_probs, 1)
         test_4cls_origin_preds = copy.deepcopy(test_4cls_preds)
 
-        batch0, batch1, batch2, batch3, all_batch = self.bring_trained_data()
+        batch0, batch1, batch2, batch3 = self.bring_trained_data()
         imgs_0, labels_0 = batch0
         imgs_1, labels_1 = batch1
         imgs_2, labels_2 = batch2
         imgs_3, labels_3 = batch3
-        # all_imgs, all_labels = all_batch
         labels_0 = labels_0.type_as(test_y)
         labels_1 = labels_1.type_as(test_y)
         labels_2 = labels_2.type_as(test_y)
         labels_3 = labels_3.type_as(test_y)
-        # all_labels = all_labels.type_as(y)
         imgs_0 = imgs_0.type_as(test_x)
         imgs_1 = imgs_1.type_as(test_x)
         imgs_2 = imgs_2.type_as(test_x)
         imgs_3 = imgs_3.type_as(test_x)
-        # all_imgs = all_imgs.type_as(x)
         # bring data from train loader and convert to tensor
-
-
+        cnt_correct_diff = 0
         for idx, prob in enumerate(test_4cls_max_probs.values):
             if prob < self.hparams.prob:
-                #self.hparams.prob is a threshold (prob)
+                # self.hparams.prob is a threshold (prob)
+                vote_cnt_0 = 0
+                vote_cnt_1 = 0
+                vote_cnt_2 = 0
+                vote_cnt_3 = 0
+                vote_cnt_else = 0
+
                 result_0 = self.compare_func(idx, test_4cls_features, imgs_0, labels_0)
                 result_1 = self.compare_func(idx, test_4cls_features, imgs_1, labels_1)
                 result_2 = self.compare_func(idx, test_4cls_features, imgs_2, labels_2)
                 result_3 = self.compare_func(idx, test_4cls_features, imgs_3, labels_3)
-
+                # compare train imgs with test imgs // batch size
                 result_0 = torch.cat(result_0, dim=0)
                 result_1 = torch.cat(result_1, dim=0)
                 result_2 = torch.cat(result_2, dim=0)
                 result_3 = torch.cat(result_3, dim=0)
 
-                most_frequent_0 = torch.mode(result_0).values
-                most_frequent_1 = torch.mode(result_1).values
-                most_frequent_2 = torch.mode(result_2).values
-                most_frequent_3 = torch.mode(result_3).values
-                # print()
-                # print(f'most_0: {most_frequent_0} // Number of most frequent: {sum(result_0 == most_frequent_0)}')
-                # print(f'most_1: {most_frequent_1} // Number of most frequent: {sum(result_1 == most_frequent_1)}')
-                # print(f'most_2: {most_frequent_2} // Number of most frequent: {sum(result_2 == most_frequent_2)}')
-                # print(f'most_3: {most_frequent_3} // Number of most frequent: {sum(result_3 == most_frequent_3)}')
-                # print()
-                # print(f'True    label : {y[idx]}')
-                # print(f'Predict label : {preds[idx]}')
-                # print(f'Prob          : {prob}')
-                # print('####################')
+                for i in result_0:
+                    if i == 0:
+                        vote_cnt_1 += 1
+                        vote_cnt_2 += 1
+                        vote_cnt_3 += 1
+                    elif i == 1:
+                        vote_cnt_0 += 1
+                    else:
+                        vote_cnt_else += 1
+                for i in result_1:
+                    if i == 0:
+                        vote_cnt_2 += 1
+                        vote_cnt_3 += 1
+                    elif i == 1:
+                        vote_cnt_1 += 1
+                    elif i == 2:
+                        vote_cnt_0 += 1
 
-                if (most_frequent_1 == 1 & most_frequent_2 == 1):
-                    if sum(result_1 == most_frequent_1) < sum(result_2 == most_frequent_2):
-                        test_4cls_preds[idx] = torch.Tensor([2]).type_as(test_y)
-                    else:
-                        test_4cls_preds[idx] = torch.Tensor([1]).type_as(test_y)
-                elif (most_frequent_2 == 1 & most_frequent_3 == 1):
-                    if sum(result_2 == most_frequent_2) > sum(result_3 == most_frequent_3):
-                        test_4cls_preds[idx] = torch.Tensor([2]).type_as(test_y)
-                    else:
-                        test_4cls_preds[idx] = torch.Tensor([3]).type_as(test_y)
-                elif most_frequent_0 == 1:
-                    test_4cls_preds[idx] = torch.Tensor([0]).type_as(test_y)
-                elif most_frequent_1 == 1:
-                    test_4cls_preds[idx] = torch.Tensor([1]).type_as(test_y)
-                elif most_frequent_2 == 1:
-                    test_4cls_preds[idx] = torch.Tensor([2]).type_as(test_y)
-                elif most_frequent_3 == 1:
-                    test_4cls_preds[idx] = torch.Tensor([3]).type_as(test_y)
+                for i in result_2:
+                    if i == 0:
+                        vote_cnt_3 += 1
+                    elif i == 1:
+                        vote_cnt_2 += 1
+                    elif i == 2:
+                        vote_cnt_0 += 1
+                        vote_cnt_1 += 1
+                for i in result_3:
+                    if i == 0:
+                        vote_cnt_else += 1
+                    elif i == 1:
+                        vote_cnt_3 += 1
+                    elif i == 2:
+                        vote_cnt_0 += 1
+                        vote_cnt_1 += 1
+                        vote_cnt_2 += 1
+
+                vote_cls = np.argmax([vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3])
+                if test_4cls_preds[idx].cpu().detach().item() != vote_cls:
+                    if vote_cls == test_y[idx]:
+                        cnt_correct_diff += 1
+                    print()
+                    print(f'True label: {test_y[idx]}')
+                    print(f'Predict label: {test_4cls_preds[idx]}')
+                    print(f'vote_cnt_0:{vote_cnt_0}')
+                    print(f'vote_cnt_1:{vote_cnt_1}')
+                    print(f'vote_cnt_2:{vote_cnt_2}')
+                    print(f'vote_cnt_3:{vote_cnt_3}')
+                    print(f'vote_cnt_else:{vote_cnt_else}')
+                    print(f'vote_cls:{vote_cls}')
+                    print()
+                test_4cls_preds[idx] = torch.Tensor([vote_cls]).type_as(test_y)
 
         new_preds = test_4cls_preds
 
-        cnt_diff=sum(x != y for x, y in zip(test_4cls_origin_preds, new_preds))
-        print(f'length of preds : {len(test_4cls_origin_preds)} //The number of changed : {cnt_diff}')
+        cnt_diff = sum(x != y for x, y in zip(test_4cls_origin_preds, new_preds))
+        # cnt_correct_diff= sum(x != y for x, y in zip(test_4cls_origin_preds, new_preds))
+
+        # print(f'length of preds : {len(test_4cls_origin_preds)} // The number of changed : {cnt_diff}')
 
         # indices, comparison, shuffle_y = self.shuffle(x, y)
         # shuffle_features = [features[i] for i in indices]
@@ -340,7 +349,7 @@ class ColonLitModule(LightningModule):
         # losses = loss + loss_compare * self.hparams.loss_weight
         losses = test_4cls_loss
 
-        return losses, test_4cls_logits, test_4cls_origin_preds, new_preds, test_y , cnt_diff
+        return losses, test_4cls_logits, test_4cls_origin_preds, new_preds, test_y, cnt_diff, cnt_correct_diff
         # return losses, logits, logits_compare, preds, preds_compare, comparison, y, shuffle_y
 
     def training_step(self, batch, batch_idx):
@@ -423,7 +432,7 @@ class ColonLitModule(LightningModule):
 
     def test_step(self, batch, batch_idx):
         # loss, logits, logits_compare, preds, preds_compare, comparison, targets, targets_shuffle = self.step_test2(batch)
-        loss, logits, origin_preds, new_preds, targets, cnt_diff = self.step_test2(batch)
+        loss, logits, origin_preds, new_preds, targets, cnt_diff, cnt_correct_diff = self.step_test2(batch)
 
         probs = torch.softmax(logits, dim=1)
         # probs_compare = torch.softmax(logits_compare, dim=1)
@@ -818,11 +827,12 @@ class ColonLitModule(LightningModule):
         #         "cnt_other": cnt_other
         #         }
         return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds,
-                "new_preds": new_preds, "targets": targets, "cnt_diff": cnt_diff}
+                "new_preds": new_preds, "targets": targets, "cnt_diff": cnt_diff, "cnt_correct_diff": cnt_correct_diff}
 
     def test_epoch_end(self, outputs):
         # pass
         cnt_diff = sum([i['cnt_diff'] for i in outputs])
+        cnt_correct_diff = sum([i['cnt_correct_diff'] for i in outputs])
         # cnt_90 = sum([i['cnt_90'] for i in outputs])
         # cnt_80 = sum([i['cnt_80'] for i in outputs])
         # cnt_70 = sum([i['cnt_70'] for i in outputs])
@@ -855,6 +865,7 @@ class ColonLitModule(LightningModule):
         # self.log("test/cnt_50", cnt_50, on_epoch=True, on_step=False, reduce_fx='sum')
         # self.log("test/cnt_other", cnt_other, on_epoch=True, on_step=False, reduce_fx='sum')
         self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
 
     def on_epoch_end(self):
         self.train_acc.reset()

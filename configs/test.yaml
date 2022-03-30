@@ -6,8 +6,8 @@ defaults:
   - datamodule: colon.yaml # choose the datamodule for evaluation
   - model: colon.yaml
   - callbacks: wandb.yaml
-#  - logger: wandb.yaml
-  - logger: null
+  - logger: wandb.yaml
+#  - logger: null
   - trainer: default.yaml
   - log_dir: evaluation.yaml
 

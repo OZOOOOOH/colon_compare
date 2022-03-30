@@ -39,8 +39,10 @@ def test(config: DictConfig) -> None:
     model: LightningModule = hydra.utils.instantiate(config.model)
 
     # config.logger
-    if 'logger' in config.keys():
-        config.logger.wandb.name = 'Test_+compare_' + config.model.name + '_imgsize_512' + '_lw_' + str(
+    if list(config['logger'].keys())[0] == 'wandb':
+        config.logger.wandb.name = 'Test_' + 'threshold_' + str(
+            config.model.threshold) + '_entropy' + '_NumSample_' + str(
+            config.model.num_sample) + '_compare_' + config.model.name + '_imgsize_512' + '_lw_' + str(
             config.model.loss_weight) + '_scheduler_' + config.model.scheduler + '_lr_' + str(
             config.model.lr) + '_batchsize_' + str(config.datamodule.batch_size) + '_discriminator1+2'
 

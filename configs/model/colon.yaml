@@ -42,3 +42,6 @@ scheduler: 'CosineAnnealingLR'
 factor: 0.5
 patience: 3
 loss_weight: 0.1
+threshold: 0.8
+num_sample: 10
+key: 'ent'

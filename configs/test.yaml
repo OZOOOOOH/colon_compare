@@ -31,3 +31,4 @@ name: "default"
 
 # passing checkpoint path is necessary
 ckpt_path: "/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt"
+#ckpt_path: "/home/compu/jh/project/colon/logs/runs/2022-01-28/02-49-40/checkpoints/epoch_012.ckpt"

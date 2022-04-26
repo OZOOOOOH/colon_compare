@@ -2,19 +2,18 @@ from typing import Any, List
 import torch
 import torch.nn as nn
 import timm
-from pytorch_lightning import plugins
 from pytorch_lightning import LightningModule
 from torchmetrics import MaxMetric
 from torchmetrics.classification.accuracy import Accuracy
+from torchmetrics.functional import f1_score, cohen_kappa, accuracy
 import random
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 from torch.utils.data import DataLoader
 import pandas as pd
 from src.datamodules.colon_datamodule import CustomDataset
 import copy
 from scipy.stats import entropy
+import operator
 
 
 class ColonLitModule(LightningModule):
@@ -36,8 +35,10 @@ class ColonLitModule(LightningModule):
             loss_weight=0.5,
             threshold=0.8,
             num_sample=10,
-            key='ent'
-
+            key='ent',
+            sampling='random',
+            decide_by_total_probs=False,
+            weighted_sum=False
     ):
         super(ColonLitModule, self).__init__()
         self.save_hyperparameters(logger=False)
@@ -70,47 +71,114 @@ class ColonLitModule(LightningModule):
         self.train_acc_compare = Accuracy()
         self.val_acc_compare = Accuracy()
         self.test_acc_compare = Accuracy()
-
         self.val_acc_best = MaxMetric()
         self.val_acc_compare_best = MaxMetric()
 
-    def forward(self, x):
+    def forward(self, x):  # 4 classification
         return self.discriminator_layer1(self.model.forward_features(x.float()))
 
-    def shuffle(self, x, y):
+    @staticmethod
+    def vote_results(result_0, result_1, result_2, result_3):
+        vote_cnt_0 = 0
+        vote_cnt_1 = 0
+        vote_cnt_2 = 0
+        vote_cnt_3 = 0
+        vote_cnt_else = 0
+        for i in result_0:
+            if i == 0:
+                vote_cnt_1 += 1
+                vote_cnt_2 += 1
+                vote_cnt_3 += 1
+            elif i == 1:
+                vote_cnt_0 += 1
+            else:
+                vote_cnt_else += 1
+        print(f'In result_0: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+        for i in result_1:
+            if i == 0:
+                vote_cnt_2 += 1
+                vote_cnt_3 += 1
+            elif i == 1:
+                vote_cnt_1 += 1
+            elif i == 2:
+                vote_cnt_0 += 1
+        print(f'In result_1: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+        for i in result_2:
+            if i == 0:
+                vote_cnt_3 += 1
+            elif i == 1:
+                vote_cnt_2 += 1
+            elif i == 2:
+                vote_cnt_0 += 1
+                vote_cnt_1 += 1
+        print(f'In result_2: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+        for i in result_3:
+            if i == 0:
+                vote_cnt_else += 1
+            elif i == 1:
+                vote_cnt_3 += 1
+            elif i == 2:
+                vote_cnt_0 += 1
+                vote_cnt_1 += 1
+                vote_cnt_2 += 1
+        print(f'In result_3: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+        return [vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3]
 
-        z = [list(z) for z in zip(x, y)]
-        z = list(enumerate(z))
-        z = random.sample(z, len(z))
-        indices, z = zip(*z)
-        indices = list(indices)
-        z = list(z)
-
-        tmp1 = [i[0] for i in z]
-        tmp2 = [i[1] for i in z]
-
-        shuffle_x = torch.stack(tmp1, dim=0)
-        shuffle_y = torch.stack(tmp2, dim=0)
-
-        # origin > shuffle : 0
-        # origin = shuffle : 1
-        # origin < shuffle : 2
+    def get_comparison_list(self, origin, shuffle):
         comparison = []
-        for i, j in zip(y.tolist(), shuffle_y.tolist()):
-
+        for i, j in zip(origin.tolist(), shuffle.tolist()):
             if i > j:
                 comparison.append(0)
             elif i == j:
                 comparison.append(1)
             else:
                 comparison.append(2)
-        comparison = torch.tensor(comparison, device=self.device)
+        return torch.tensor(comparison, device=self.device)
+
+    @staticmethod
+    def get_shuffled_label(x, y):
+        pair = list(enumerate(list(pair) for pair in zip(x, y)))
+        pair = random.sample(pair, len(pair))
+        indices, pair = zip(*pair)
+        indices = list(indices)
+        pair = list(pair)
+        shuffle_y = [i[1] for i in pair]
+        shuffle_y = torch.stack(shuffle_y, dim=0)
+
+        return indices, shuffle_y
+
+    def shuffle_batch(self, x, y):
+
+        indices, shuffle_y = self.get_shuffled_label(x, y)
+        comparison = self.get_comparison_list(y, shuffle_y)
+
         return indices, comparison, shuffle_y
 
-    def bring_trained_data(self):
+    def get_convinced(self, x, dataloader):
+        convinced = []
+        for img, label in dataloader:
+            img = img.type_as(x)
+            logits = self.forward(img)
+            preds = torch.argmax(logits, dim=1)
+            probs = torch.softmax(logits, dim=1)
+            max_probs = torch.max(probs, 1)
+
+            escape = False
+            for i, v in enumerate(max_probs.values):
+                if v > 0.9 and preds[i] == label[0]:
+                    convinced.append(img[i])
+                    if len(convinced) == self.hparams.num_sample:
+                        escape = True
+                        break
+            if escape:
+                break
+        return convinced
+
+    def bring_random_trained_data(self, x):
         self.trainer.datamodule.setup()
         train_img_path = self.trainer.datamodule.train_dataloader().dataset.image_id
         train_img_labels = self.trainer.datamodule.train_dataloader().dataset.labels
+
         random_idx_label0 = np.random.choice(np.where(train_img_labels == 0)[0], self.hparams.num_sample, replace=False)
         random_idx_label1 = np.random.choice(np.where(train_img_labels == 1)[0], self.hparams.num_sample, replace=False)
         random_idx_label2 = np.random.choice(np.where(train_img_labels == 2)[0], self.hparams.num_sample, replace=False)
@@ -170,39 +238,91 @@ class ColonLitModule(LightningModule):
             drop_last=False,
             shuffle=False,
         )
+        imgs_0, labels_0 = next(iter(dataloader_0))
+        imgs_1, labels_1 = next(iter(dataloader_1))
+        imgs_2, labels_2 = next(iter(dataloader_2))
+        imgs_3, labels_3 = next(iter(dataloader_3))
+        # bring data from train loader and convert to tensor
+        imgs_0 = imgs_0.type_as(x)
+        imgs_1 = imgs_1.type_as(x)
+        imgs_2 = imgs_2.type_as(x)
+        imgs_3 = imgs_3.type_as(x)
 
-        return next(iter(dataloader_0)), next(iter(dataloader_1)), next(iter(dataloader_2)), next(
-            iter(dataloader_3))
+        return imgs_0, imgs_1, imgs_2, imgs_3
 
-    def step(self, batch):
-        x, y = batch
-        # logits = self.forward(x)
-        features = self.model.forward_features(x.float())
-        # logits = self.model.head(features)
-        logits = self.discriminator_layer1(features)
-        loss = self.criterion(logits, y)
-        preds = torch.argmax(logits, dim=1)
+    def bring_convinced_trained_data(self, x):
+        # bring convinced data
+        self.trainer.datamodule.setup()
+        train_img_path = self.trainer.datamodule.train_dataloader().dataset.image_id
+        train_img_labels = self.trainer.datamodule.train_dataloader().dataset.labels
 
-        indices, comparison, shuffle_y = self.shuffle(x, y)
-        shuffle_features = [features[i] for i in indices]
-        shuffle_features = torch.stack(shuffle_features, dim=0)
-        # size of shuffle_feature is [16, 768]
+        idx_label0 = np.where(train_img_labels == 0)[0]
+        idx_label1 = np.where(train_img_labels == 1)[0]
+        idx_label2 = np.where(train_img_labels == 2)[0]
+        idx_label3 = np.where(train_img_labels == 3)[0]
 
-        concat_features = torch.cat((features, shuffle_features), dim=1)
+        train_path0 = train_img_path[idx_label0]
+        train_path1 = train_img_path[idx_label1]
+        train_path2 = train_img_path[idx_label2]
+        train_path3 = train_img_path[idx_label3]
 
-        logits_compare = self.discriminator_layer2(concat_features)
-        # logits_compare = self.compare_layer(concat_features)
-        loss_compare = self.criterion(logits_compare, comparison)
-        preds_compare = torch.argmax(logits_compare, dim=1)
+        train_label0 = train_img_labels[idx_label0]
+        train_label1 = train_img_labels[idx_label1]
+        train_label2 = train_img_labels[idx_label2]
+        train_label3 = train_img_labels[idx_label3]
 
-        losses = loss + loss_compare * self.hparams.loss_weight
+        df_0 = pd.DataFrame({'path': train_path0,
+                             'class': train_label0
+                             })
+        df_1 = pd.DataFrame({'path': train_path1,
+                             'class': train_label1
+                             })
+        df_2 = pd.DataFrame({'path': train_path2,
+                             'class': train_label2
+                             })
+        df_3 = pd.DataFrame({'path': train_path3,
+                             'class': train_label3
+                             })
 
-        return losses, preds, y, preds_compare, comparison
+        dataloader_0 = DataLoader(
+            CustomDataset(df_0, self.trainer.datamodule.train_transform),
+            batch_size=16,
+            num_workers=0,
+            pin_memory=False,
+            drop_last=False,
+            shuffle=True,
+        )
+        dataloader_1 = DataLoader(
+            CustomDataset(df_1, self.trainer.datamodule.train_transform),
+            batch_size=16,
+            num_workers=0,
+            pin_memory=False,
+            drop_last=False,
+            shuffle=True,
+        )
+        dataloader_2 = DataLoader(
+            CustomDataset(df_2, self.trainer.datamodule.train_transform),
+            batch_size=16,
+            num_workers=0,
+            pin_memory=False,
+            drop_last=False,
+            shuffle=True,
+        )
+        dataloader_3 = DataLoader(
+            CustomDataset(df_3, self.trainer.datamodule.train_transform),
+            batch_size=16,
+            num_workers=0,
+            pin_memory=False,
+            drop_last=False,
+            shuffle=True,
+        )
+        return self.get_convinced(x, dataloader_0), self.get_convinced(x, dataloader_1), \
+               self.get_convinced(x, dataloader_2), self.get_convinced(x, dataloader_3)
 
-    def compare_func(self, idx, features, imgs, labels):
+    def compare_test_with_trained(self, idx, features, imgs):
         # compare trained and test labels
         result_list = []
-        for img, label in zip(imgs, labels):
+        for img in imgs:
             trained_features = self.model.forward_features(img.unsqueeze(0).float())
             concat_test_with_trained_features = torch.cat((features[idx].unsqueeze(0), trained_features), dim=1)
             logits_compare = self.discriminator_layer2(concat_test_with_trained_features)
@@ -210,16 +330,95 @@ class ColonLitModule(LightningModule):
             result_list.append(pred)
         return result_list
 
-    def step_test1(self, batch):
+    def predict_using_voting(self, entopy_4cls, max_probs_4cls, features, total_imgs, probs_4cls, preds_4cls, y):
+
+        imgs_0, imgs_1, imgs_2, imgs_3 = total_imgs
+        cnt_correct_diff = 0
+        ops = {'ent': operator.gt, 'prob': operator.lt}
+        # gt: > , lt: <
+        threshold_key = entopy_4cls if self.hparams.key == 'ent' else max_probs_4cls.values
+        for idx, value in enumerate(threshold_key):
+            if ops[self.hparams.key](value, self.hparams.threshold):
+                result_0 = torch.cat(self.compare_test_with_trained(idx, features, imgs_0), dim=0)
+                result_1 = torch.cat(self.compare_test_with_trained(idx, features, imgs_1), dim=0)
+                result_2 = torch.cat(self.compare_test_with_trained(idx, features, imgs_2), dim=0)
+                result_3 = torch.cat(self.compare_test_with_trained(idx, features, imgs_3), dim=0)
+                # compare train imgs with test imgs // batch size
+                vote_cnt = self.vote_results(result_0, result_1, result_2, result_3)
+                total_score = sum(vote_cnt)
+                prob_vote = np.array([i / total_score for i in vote_cnt])
+
+                add_probs_4cls_vote = (probs_4cls[idx].detach().cpu().numpy() + prob_vote) / 2
+                # divide 2 (1+1)
+                vote_cls = np.argmax(add_probs_4cls_vote) if self.hparams.decide_by_total_probs else np.argmax(vote_cnt)
+
+                e_4cls, e_vote = (
+                    entropy(probs_4cls[idx].detach().cpu().numpy()),
+                    entropy(prob_vote)) if self.hparams.weighted_sum else (
+                    None, None)
+
+                if e_4cls is not None and e_4cls > e_vote:
+                    w_4cls_prob = np.exp(-e_4cls) / (np.exp(-e_4cls) + np.exp(-e_vote))
+                    w_vot_prob = np.exp(-e_vote) / (np.exp(-e_4cls) + np.exp(-e_vote))
+
+                    voting_classify = probs_4cls[
+                                          idx].detach().cpu().numpy() * w_4cls_prob + prob_vote * w_vot_prob
+                    vote_cls = np.argmax(voting_classify)
+
+                # class based on voting
+                if preds_4cls[idx].detach().cpu().item() != vote_cls:
+                    if vote_cls == y[idx]:
+                        cnt_correct_diff += 1
+                    print()
+                    print(f'True label: {y[idx]}')
+                    print(f'Predict label: {preds_4cls[idx]}')
+                    print(f'vote_cnt_0:{vote_cnt[0]}')
+                    print(f'vote_cnt_1:{vote_cnt[1]}')
+                    print(f'vote_cnt_2:{vote_cnt[2]}')
+                    print(f'vote_cnt_3:{vote_cnt[3]}')
+                    print(f'vote_cls:{vote_cls}')
+                    print()
+                preds_4cls[idx] = torch.Tensor([vote_cls]).type_as(y)
+        return cnt_correct_diff, preds_4cls
+
+    def step(self, batch):
         x, y = batch
         features = self.model.forward_features(x.float())
         logits = self.discriminator_layer1(features)
         loss = self.criterion(logits, y)
         preds = torch.argmax(logits, dim=1)
 
-        indices, comparison, shuffle_y = self.shuffle(x, y)
+        indices, comparison, shuffle_y = self.shuffle_batch(x, y)
         shuffle_features = [features[i] for i in indices]
         shuffle_features = torch.stack(shuffle_features, dim=0)
+        # size of shuffle_feature is [16, 768]
+
+        concat_features_with_shuffled = torch.cat((features, shuffle_features), dim=1)
+
+        logits_compare = self.discriminator_layer2(concat_features_with_shuffled)
+        loss_compare = self.criterion(logits_compare, comparison)
+        preds_compare = torch.argmax(logits_compare, dim=1)
+
+        losses = loss + loss_compare * self.hparams.loss_weight
+
+        return losses, preds, y, preds_compare, comparison
+
+    def step_test0(self, batch):  # only classification
+        x, y = batch
+        logits = self.forward(x)
+        loss = self.criterion(logits, y)
+        preds = torch.argmax(logits, dim=1)
+        return loss, logits, preds, y
+
+    def step_test1(self, batch):  # classification + compare
+        x, y = batch
+        features = self.model.forward_features(x.float())
+        logits_4cls = self.discriminator_layer1(features)
+        loss_4cls = self.criterion(logits_4cls, y)
+        preds_4cls = torch.argmax(logits_4cls, dim=1)
+
+        shuffle_indices, comparison, shuffle_y = self.shuffle_batch(x, y)
+        shuffle_features = torch.stack([features[i] for i in shuffle_indices], dim=0)
         # size of shuffle_feature is [16, 768]
 
         concat_features = torch.cat((features, shuffle_features), dim=1)
@@ -229,148 +428,85 @@ class ColonLitModule(LightningModule):
         loss_compare = self.criterion(logits_compare, comparison)
         preds_compare = torch.argmax(logits_compare, dim=1)
 
-        losses = loss + loss_compare * self.hparams.loss_weight
+        loss = loss_4cls + loss_compare * self.hparams.loss_weight
 
-        return losses, logits, logits_compare, preds, preds_compare, comparison, y, shuffle_y
+        return loss, logits_4cls, logits_compare, preds_4cls, preds_compare, comparison, y, shuffle_y
 
-    def step_test2(self, batch):
-        test_x, test_y = batch
-        test_4cls_features = self.model.forward_features(test_x.float())
-        test_4cls_logits = self.discriminator_layer1(test_4cls_features)
-        test_4cls_loss = self.criterion(test_4cls_logits, test_y)
-        test_4cls_preds = torch.argmax(test_4cls_logits, dim=1)
-        test_4cls_probs = torch.softmax(test_4cls_logits, dim=1)
-        test_4cls_max_probs = torch.max(test_4cls_probs, 1)
-        test_4cls_origin_preds = copy.deepcopy(test_4cls_preds)
-        test_4cls_entropy = list(map(lambda x: entropy(x), test_4cls_probs.cpu()))
-        batch0, batch1, batch2, batch3 = self.bring_trained_data()
-        imgs_0, labels_0 = batch0
-        imgs_1, labels_1 = batch1
-        imgs_2, labels_2 = batch2
-        imgs_3, labels_3 = batch3
-        labels_0 = labels_0.type_as(test_y)
-        labels_1 = labels_1.type_as(test_y)
-        labels_2 = labels_2.type_as(test_y)
-        labels_3 = labels_3.type_as(test_y)
-        imgs_0 = imgs_0.type_as(test_x)
-        imgs_1 = imgs_1.type_as(test_x)
-        imgs_2 = imgs_2.type_as(test_x)
-        imgs_3 = imgs_3.type_as(test_x)
-        # bring data from train loader and convert to tensor
-        cnt_correct_diff = 0
-        # count (original preds != voting preds)
+    def step_test2(self, batch):  # random sampling or convinced sampling or weighted_sum or thresholding or
+        x, y = batch
+        features = self.model.forward_features(x.float())
+        logits_4cls = self.discriminator_layer1(features)
+        loss_4cls = self.criterion(logits_4cls, y)
+        preds_4cls = torch.argmax(logits_4cls, dim=1)
+        probs_4cls = torch.softmax(logits_4cls, dim=1)
+        max_probs_4cls = torch.max(probs_4cls, 1)
+        origin_preds_4cls = copy.deepcopy(preds_4cls)
+        entropy_4cls = list(map(lambda i: entropy(i), probs_4cls.detach().cpu().numpy()))
+        imgs_0, imgs_1, imgs_2, imgs_3 = self.bring_random_trained_data(
+            x) if self.hparams.sampling == 'random' else self.bring_convinced_trained_data(x)
 
-        key = test_4cls_entropy if self.hparams.key == 'ent' else test_4cls_max_probs
-        for idx, value in enumerate(key):
-            if value < self.hparams.threshold:
-                # self.hparams.prob is a threshold (prob)
-                vote_cnt_0 = 0
-                vote_cnt_1 = 0
-                vote_cnt_2 = 0
-                vote_cnt_3 = 0
-                vote_cnt_else = 0
-
-                result_0 = self.compare_func(idx, test_4cls_features, imgs_0, labels_0)
-                result_1 = self.compare_func(idx, test_4cls_features, imgs_1, labels_1)
-                result_2 = self.compare_func(idx, test_4cls_features, imgs_2, labels_2)
-                result_3 = self.compare_func(idx, test_4cls_features, imgs_3, labels_3)
-                # compare train imgs with test imgs // batch size
-                result_0 = torch.cat(result_0, dim=0)
-                result_1 = torch.cat(result_1, dim=0)
-                result_2 = torch.cat(result_2, dim=0)
-                result_3 = torch.cat(result_3, dim=0)
-
-                for i in result_0:
-                    if i == 0:
-                        vote_cnt_1 += 1
-                        vote_cnt_2 += 1
-                        vote_cnt_3 += 1
-                    elif i == 1:
-                        vote_cnt_0 += 1
-                    else:
-                        vote_cnt_else += 1
-                for i in result_1:
-                    if i == 0:
-                        vote_cnt_2 += 1
-                        vote_cnt_3 += 1
-                    elif i == 1:
-                        vote_cnt_1 += 1
-                    elif i == 2:
-                        vote_cnt_0 += 1
-
-                for i in result_2:
-                    if i == 0:
-                        vote_cnt_3 += 1
-                    elif i == 1:
-                        vote_cnt_2 += 1
-                    elif i == 2:
-                        vote_cnt_0 += 1
-                        vote_cnt_1 += 1
-                for i in result_3:
-                    if i == 0:
-                        vote_cnt_else += 1
-                    elif i == 1:
-                        vote_cnt_3 += 1
-                    elif i == 2:
-                        vote_cnt_0 += 1
-                        vote_cnt_1 += 1
-                        vote_cnt_2 += 1
-
-                vote_cls = np.argmax([vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3])
-                # class based on voting
-                if test_4cls_preds[idx].cpu().detach().item() != vote_cls:
-                    if vote_cls == test_y[idx]:
-                        cnt_correct_diff += 1
-                    print()
-                    print(f'True label: {test_y[idx]}')
-                    print(f'Predict label: {test_4cls_preds[idx]}')
-                    print(f'vote_cnt_0:{vote_cnt_0}')
-                    print(f'vote_cnt_1:{vote_cnt_1}')
-                    print(f'vote_cnt_2:{vote_cnt_2}')
-                    print(f'vote_cnt_3:{vote_cnt_3}')
-                    print(f'vote_cnt_else:{vote_cnt_else}')
-                    print(f'vote_cls:{vote_cls}')
-                    print()
-                test_4cls_preds[idx] = torch.Tensor([vote_cls]).type_as(test_y)
-
-        new_preds = test_4cls_preds
-
-        cnt_diff = sum(x != y for x, y in zip(test_4cls_origin_preds, new_preds))
-        # print(f'length of preds : {len(test_4cls_origin_preds)} // The number of changed : {cnt_diff}')
+        total_imgs = [imgs_0, imgs_1, imgs_2, imgs_3]
+        cnt_correct_diff, new_preds_4cls = self.predict_using_voting(entropy_4cls, max_probs_4cls, features, total_imgs,
+                                                                     probs_4cls, preds_4cls, y)
+        cnt_diff = sum(x != y for x, y in zip(origin_preds_4cls, new_preds_4cls))
+        # print(f'length of preds : {len(origin_preds_4cls)} // The number of changed : {cnt_diff}')
 
         # losses = loss + loss_compare * self.hparams.loss_weight
-        losses = test_4cls_loss
+        loss = loss_4cls
 
-        return losses, test_4cls_logits, test_4cls_origin_preds, new_preds, test_y, cnt_diff, cnt_correct_diff
-        # return losses, logits, logits_compare, preds, preds_compare, comparison, y, shuffle_y
+        return loss, logits_4cls, origin_preds_4cls, new_preds_4cls, y, cnt_diff, cnt_correct_diff
 
-    def step_test3(self, batch):
-        test_x, test_y = batch
-        test_4cls_features = self.model.forward_features(test_x.float())
-        test_4cls_logits = self.discriminator_layer1(test_4cls_features)
-        test_4cls_loss = self.criterion(test_4cls_logits, test_y)
-        test_4cls_preds = torch.argmax(test_4cls_logits, dim=1)
-        test_4cls_probs = torch.softmax(test_4cls_logits, dim=1)
-        test_4cls_max_probs = torch.max(test_4cls_probs, 1)
-        test_4cls_entropy = list(map(lambda x: entropy(x), test_4cls_probs.cpu()))
-
-        losses = test_4cls_loss
-
-        return losses, test_4cls_probs, test_y, test_4cls_preds, test_4cls_max_probs, test_4cls_entropy
+    # def step_test6(self, batch):  # random sampling + (voting+cls) + weighted sum
+    #     x, y = batch
+    #     features = self.model.forward_features(x.float())
+    #     logits_4cls = self.discriminator_layer1(features)
+    #     loss_4cls = self.criterion(logits_4cls, y)
+    #     preds_4cls = torch.argmax(logits_4cls, dim=1)
+    #     probs_4cls = torch.softmax(logits_4cls, dim=1)
+    #     max_probs_4cls = torch.max(probs_4cls, 1)
+    #     origin_preds_4cls = copy.deepcopy(preds_4cls)
+    #     entropy_4cls = list(map(lambda i: entropy(i), probs_4cls.cpu()))
+    #     imgs_0, imgs_1, imgs_2, imgs_3 = self.bring_random_trained_data(x)
+    #
+    #     # bring data from train loader and convert to tensor
+    #     cnt_correct_diff = 0
+    #     # count (original preds != voting preds)
+    #
+    #     key = entropy_4cls if self.hparams.key == 'ent' else max_probs_4cls.values
+    #
+    #     for idx, value in enumerate(key):
+    #         if value > self.hparams.threshold:
+    #             # self.hparams.prob is a threshold (prob)
+    #             result_0 = torch.cat(self.compare_test_with_trained(idx, features, imgs_0), dim=0)
+    #             result_1 = torch.cat(self.compare_test_with_trained(idx, features, imgs_1), dim=0)
+    #             result_2 = torch.cat(self.compare_test_with_trained(idx, features, imgs_2), dim=0)
+    #             result_3 = torch.cat(self.compare_test_with_trained(idx, features, imgs_3), dim=0)
+    #             # compare train imgs with test imgs // batch size
+    #             vote_cnt = self.vote_results(result_0, result_1,
+    #                                          result_2, result_3)
+    #             total_score = sum(vote_cnt)
+    #
+    #             prob_vote = np.array([i / total_score for i in vote_cnt])
+    #
+    #             e1 = entropy(probs_4cls[idx].detach().cpu().numpy())
+    #             e2 = entropy(prob_vote)
+    #             if e1 > e2:
+    #                 w_cls_prob = np.exp(-e1) / (np.exp(-e1) + np.exp(-e2))
+    #                 w_vot_prob = np.exp(-e2) / (np.exp(-e1) + np.exp(-e2))
+    #
+    #                 voting_classify = probs_4cls[
+    #                                       idx].detach().cpu().numpy() * w_cls_prob + prob_vote * w_vot_prob
+    #                 vote_cls = np.argmax(voting_classify)
+    #                 # class based on voting
 
     def training_step(self, batch, batch_idx):
-        loss, preds, targets, preds_compare, comparison = self.step(batch)
+        loss, logits, preds, targets = self.step_test0(batch)
         acc = self.train_acc(preds=preds, target=targets)
-        acc_compare = self.train_acc_compare(preds=preds_compare, target=comparison)
-        # sch = self.lr_schedulers()
-        # if isinstance(sch, torch.optim.lr_scheduler.CosineAnnealingLR):
-        #     sch.step()
-        # if isinstance(sch, torch.optim.lr_scheduler.CosineAnnealingWarmRestarts):
-        #     sch.step()
+        # acc_compare = self.train_acc_compare(preds=preds_compare, target=comparison)
 
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=False)
         self.log("train/acc", acc, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("train/acc_compare", acc_compare, on_step=True, on_epoch=True, prog_bar=True)
+        # self.log("train/acc_compare", acc_compare, on_step=True, on_epoch=True, prog_bar=True)
         self.log("LearningRate", self.optimizer.param_groups[0]['lr'])
 
         logs = {
@@ -378,9 +514,9 @@ class ColonLitModule(LightningModule):
             "acc": acc,
             "preds": preds,
             "targets": targets,
-            "acc_compare": preds_compare,
-            "preds_compare": preds_compare,
-            "comparison": comparison
+            #   "acc_compare": preds_compare,
+            #  "preds_compare": preds_compare,
+            # "comparison": comparison
         }
 
         return logs
@@ -395,16 +531,16 @@ class ColonLitModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        loss, preds, targets, preds_compare, comparison = self.step(batch)
-
+        # loss, preds, targets, preds_compare, comparison = self.step(batch)
+        loss, logits, preds, targets = self.step_test0(batch)
         acc = self.val_acc(preds, targets)
-        acc_compare = self.val_acc_compare(preds=preds_compare, target=comparison)
+        # acc_compare = self.val_acc_compare(preds=preds_compare, target=comparison)
 
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/acc_compare", acc_compare, on_step=False, on_epoch=True, prog_bar=True)
-        return {"loss": loss, "acc": acc, "preds": preds, "targets": targets, "acc_compare": preds_compare,
-                "preds_compare": preds_compare, "comparison": comparison}
+        # self.log("val/acc_compare", acc_compare, on_step=False, on_epoch=True, prog_bar=True)
+        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets, "acc_compare": preds_compare,
+        #         "preds_compare": preds_compare, "comparison": comparison}
 
     def validation_epoch_end(self, outputs):
         # called at the end of the validation epoch
@@ -413,45 +549,59 @@ class ColonLitModule(LightningModule):
         acc = self.val_acc.compute()
         self.val_acc_best.update(acc)
 
-        acc_compare = self.val_acc_compare.compute()
-        self.val_acc_compare_best.update(acc_compare)
+        # acc_compare = self.val_acc_compare.compute()
+        # self.val_acc_compare_best.update(acc_compare)
         self.log("val/acc_best", self.val_acc_best.compute(), on_epoch=True, prog_bar=True)
-        self.log("val/acc_compare_best", self.val_acc_compare_best.compute(), on_epoch=True, prog_bar=True)
+        # self.log("val/acc_compare_best", self.val_acc_compare_best.compute(), on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
-        # loss, logits, logits_compare, preds, preds_compare, comparison, targets, targets_shuffle = self.step_test2(batch)
-        loss, logits, origin_preds, new_preds, targets, cnt_diff, cnt_correct_diff = self.step_test2(batch)
-        origin_acc = self.test_acc(origin_preds, targets)
-        new_acc = self.test_acc(new_preds, targets)
+        loss, logits_4cls, origin_preds_4cls, preds, targets, cnt_diff, cnt_correct_diff = self.step_test2(batch)
+        # loss, logits, logits_compare, preds, preds_compare, comparison, targets, shuffle_targets = self.step_test1(
+        #     batch)
 
+        # origin_acc = self.test_acc(origin_preds, targets)
+        # new_acc = self.test_acc(new_preds_4cls, targets)
+        acc = self.test_acc(preds, targets)
+        # acc_compare = self.test_acc_compare(preds_compare, comparison)
         self.log("test/loss", loss, on_step=False, on_epoch=True)
-        self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
-        self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
-
-        return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds,
-                "new_preds": new_preds, "targets": targets, "cnt_diff": cnt_diff, "cnt_correct_diff": cnt_correct_diff}
-
-    # def test_step(self, batch, batch_idx):
-    #     loss, probs, targets, preds, max_probs, entropies = self.step_test3(batch)
-    #
-    #     acc = self.test_acc(preds, targets)
-    #
-    #     # self.log("test/probs", probs, on_step=True, on_epoch=False)
-    #     # self.log("test/targets", targets, on_step=True, on_epoch=False)
-    #     # self.log("test/preds", preds, on_step=True, on_epoch=False)
-    #     # self.log("test/max_probs", max_probs.values, on_step=True, on_epoch=False)
-    #     # self.log("test/entropy", torch.Tensor(entropy), on_step=True, on_epoch=False)
-    #
-    #     return {"loss": loss, "acc": acc, "probs": probs, "targets": targets, "preds": preds, "max_probs": max_probs,
-    #             "entropies": entropies}
+        # self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
+        # self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
+        self.log("test/acc", acc, on_step=False, on_epoch=True)
+        # self.log("test/acc_compare", acc_compare, on_step=False, on_epoch=True)
+        return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
+        # return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds,
+        #         "new_preds_4cls": new_preds_4cls, "targets": targets, "cnt_diff": cnt_diff, "cnt_correct_diff": cnt_correct_diff}
 
     def test_epoch_end(self, outputs):
         # pass
-        cnt_diff = sum([i['cnt_diff'] for i in outputs])
-        cnt_correct_diff = sum([i['cnt_correct_diff'] for i in outputs])
-        cnt_diff = cnt_diff.sum()
-        self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        preds = torch.cat([i['preds'] for i in outputs], 0)
+        targets = torch.cat([i['targets'] for i in outputs], 0)
+        # f1 = self.test_f1(preds, targets)
+        # wq_kappa = self.test_QWKappa(preds, targets)
+
+        # wq_kappa = CohenKappa(num_classes=4, weights='quadratic')
+        acc = accuracy(preds, targets, num_classes=4)
+        f1score_micro = f1_score(preds, targets, num_classes=4, average='micro')
+        f1score_macro = f1_score(preds, targets, num_classes=4, average='macro')
+        f1score_weighted = f1_score(preds, targets, num_classes=4, average='weighted')
+        f1score_none = f1_score(preds, targets, num_classes=4, average='none')
+        f1score_samples = f1_score(preds, targets, num_classes=4, average='samples')
+        qwkappa = cohen_kappa(preds, targets, num_classes=4, weights='quadratic')
+
+        # wq_kappa_score = wq_kappa(preds, targets)
+
+        self.log("test/f1_micro", f1score_micro, on_step=False, on_epoch=True)
+        self.log("test/f1_macro", f1score_macro, on_step=False, on_epoch=True)
+        self.log("test/f1_weighted", f1score_weighted, on_step=False, on_epoch=True)
+        self.log("test/f1_none", f1score_none, on_step=False, on_epoch=True)
+        self.log("test/f1_samples", f1score_samples, on_step=False, on_epoch=True)
+        self.log("test/wqKappa", qwkappa, on_step=False, on_epoch=True)
+        self.log("test/f_acc", acc, on_step=False, on_epoch=True)
+        # cnt_diff = sum([i['cnt_diff'] for i in outputs])
+        # cnt_correct_diff = sum([i['cnt_correct_diff'] for i in outputs])
+        # cnt_diff = cnt_diff.sum()
+        # self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
 
     # def test_epoch_end(self, outputs):
     #     # pass
@@ -490,57 +640,29 @@ class ColonLitModule(LightningModule):
         return {"optimizer": self.optimizer, "lr_scheduler": self.scheduler}
 
     def get_scheduler(self):
-        if self.hparams.scheduler == 'ReduceLROnPlateau':
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        schedulers = {
+            'ReduceLROnPlateau': torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
                 mode='min',
                 factor=self.hparams.factor,
                 patience=self.hparams.patience,
                 verbose=True,
-                eps=self.hparams.eps)
-        elif self.hparams.scheduler == 'CosineAnnealingLR':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                eps=self.hparams.eps),
+            'CosineAnnealingLR': torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=self.hparams.t_max,
                 eta_min=self.hparams.min_lr,
-                last_epoch=-1)
-        elif self.hparams.scheduler == 'CosineAnnealingWarmRestarts':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                last_epoch=-1),
+            'CosineAnnealingWarmRestarts': torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
                 T_0=self.hparams.T_0,
                 T_mult=1,
                 eta_min=self.hparams.min_lr,
-                last_epoch=-1)
-        elif self.hparams.scheduler == 'StepLR':
-            scheduler = torch.optim.lr_scheduler.StepLR(
-                self.optimizer, step_size=200, gamma=0.1,
-            )
-        elif self.hparams.scheduler == 'ExponentialLR':
-            scheduler = torch.optim.lr_scheduler.ExponentialLR(
-                self.optimizer, gamma=0.95
-            )
-        # elif self.hparams.scheduler == 'MultiStepLR':
-        #     scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        #         )
-        # elif self.hparams.scheduler == 'ConstantLR':
-        #     scheduler = torch.optim.lr_scheduler.ConstantLR(
-        #         )
-        # elif self.hparams.scheduler == 'LinearLR':
-        #     scheduler = torch.optim.lr_scheduler.LinearLR(
-        #         )
-        # elif self.hparams.scheduler == 'ChainedScheduler':
-        #     scheduler = torch.optim.lr_scheduler.ChainedScheduler(
-        #         )
-        # elif self.hparams.scheduler == 'SequentialLR':
-        #     scheduler = torch.optim.lr_scheduler.SequentialLR(
-        #         )
-        # elif self.hparams.scheduler == 'CyclicLR':
-        #     scheduler = torch.optim.lr_scheduler.CyclicLR(
-        #         self.optimizer, base_lr=1e-5, max_lr=1e-2, step_size_up=5,mode="exp_range", gamma=0.95
-        #     )
-        # elif self.hparams.scheduler == 'OneCycleLR':
-        #     scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        #         self.optimizer, max_lr=1e-2,
-        #     )
+                last_epoch=-1),
+            'StepLR': torch.optim.lr_scheduler.StepLR(
+                self.optimizer, step_size=200, gamma=0.1),
+            'ExponentialLR': torch.optim.lr_scheduler.ExponentialLR(
+                self.optimizer, gamma=0.95),
 
-        return scheduler
+        }
+        return schedulers.get(self.hparams.scheduler, schedulers['ReduceLROnPlateau'])

@@ -1,4 +1,4 @@
-_target_: src.models.colon_module2.ColonLitModule
+_target_: src.models.colon_module.ColonLitModule
 
 name: vit_large_r50_s32_384
 
@@ -38,10 +38,14 @@ T_0: 15
 T_mult: 2
 eta_min: 1e-6
 pretrained: True
-scheduler: 'CosineAnnealingLR'
+scheduler: 'ReduceLROnPlateau'
 factor: 0.5
 patience: 3
-loss_weight: 0.1
+eps: 1e-8
+loss_weight: 0.25
 threshold: 0.8
 num_sample: 10
-key: 'ent'
+key: 'prob'
+sampling: 'random'
+decide_by_total_probs: False
+weighted_sum: False

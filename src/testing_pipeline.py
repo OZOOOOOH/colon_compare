@@ -39,14 +39,12 @@ def test(config: DictConfig) -> None:
     model: LightningModule = hydra.utils.instantiate(config.model)
 
     # config.logger
-    if list(config['logger'].keys())[0] == 'wandb':
-        config.logger.wandb.name = 'Test_' + 'threshold_' + str(
-            config.model.threshold) + '_entropy' + '_NumSample_' + str(
-            config.model.num_sample) + '_compare_' + config.model.name + '_imgsize_512' + '_lw_' + str(
-            config.model.loss_weight) + '_scheduler_' + config.model.scheduler + '_lr_' + str(
-            config.model.lr) + '_batchsize_' + str(config.datamodule.batch_size) + '_discriminator1+2'
+    if 'logger' in config and list(config['logger'].keys())[0] == 'wandb':
+        config.logger.wandb.name = config.model.key + str(config.model.threshold) + '_threshold_' \
+                                   + config.model.sampling + '_Sampling_' + 'weighted_sum_' \
+                                   + str(config.model.weighted_sum) + '_decide_total_probs_' + str(config.model.decide_by_total_probs) \
+                                   + '_NumSample_' + str(config.model.num_sample)
 
-    # Init lightning loggers
     logger: List[LightningLoggerBase] = []
     if "logger" in config:
         for _, lg_conf in config.logger.items():
@@ -59,7 +57,9 @@ def test(config: DictConfig) -> None:
     trainer: Trainer = hydra.utils.instantiate(config.trainer, logger=logger)
 
     # Log hyperparameters
-    trainer.logger.log_hyperparams({"ckpt_path": config.ckpt_path})
+    if logger:
+        trainer.logger.log_hyperparams({"ckpt_path": config.ckpt_path})
 
     log.info("Starting testing!")
     trainer.test(model=model, datamodule=datamodule, ckpt_path=config.ckpt_path)
+    # trainer.test(model=model, datamodule=datamodule)

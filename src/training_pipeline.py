@@ -17,7 +17,7 @@ from src import utils
 log = utils.get_logger(__name__)
 
 
-def train(config: DictConfig) -> Optional[float]:
+def train(config: DictConfig) -> Optional[float]:  # sourcery no-metrics
     """Contains the training pipeline.
     Can additionally evaluate model on a testset, using best weights achieved during training.
 
@@ -57,10 +57,8 @@ def train(config: DictConfig) -> Optional[float]:
 
     # config.logger
     if 'logger' in config.keys():
-        config.logger.wandb.name = 'compare_' + config.model.name + '_imgsize_512' + '_lw_' + str(
-            config.model.loss_weight) + '_scheduler_' + config.model.scheduler + '_lr_' + str(
-            config.model.lr) + '_batchsize_' + str(config.datamodule.batch_size) + '_discriminator1+2'
-
+        config.logger.wandb.name = config.model.name + '_imgsize_512' + '_scheduler_' + config.model.scheduler + '_lr_' \
+                                   + str(config.model.lr) + '_batchsize_' + str(config.datamodule.batch_size)
 
     # Init lightning loggers
     logger: List[LightningLoggerBase] = []

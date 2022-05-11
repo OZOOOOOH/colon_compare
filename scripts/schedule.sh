@@ -1,64 +1,8 @@
 #!/bin/bash
 # Shedule execution of many runs
 # Run from root folder with: bash scripts/schedule.sh
-#python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-01-28/02-49-40/checkpoints/epoch_012.ckpt"
-
 #python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-01-28/02-49-40/checkpoints/epoch_012.ckpt" datamodule.batch_size=2 datamodule.drop_last=True
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=False model.weighted_sum=False model.key='prob' model.sampling='random' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=False model.key='prob' model.sampling='random' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=False model.weighted_sum=False model.key='ent' model.sampling='random' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=False model.key='ent' model.sampling='random' model.threshold=0.7
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=False model.weighted_sum=False model.key='prob' model.sampling='trust' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=False model.key='prob' model.sampling='trust' model.threshold=0.7z
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=False model.weighted_sum=False model.key='ent' model.sampling='trust' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=False model.key='ent' model.sampling='trust' model.threshold=0.7
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.5
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.5
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.5
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.5
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.55
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.55
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.55
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.55
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.6
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.6
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.6
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.6
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.65
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.65
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.65
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.65
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.7
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.7
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.75
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.75
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.75
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.75
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.8
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.8
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.8
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.8
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='random' model.threshold=0.85
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.85
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='prob' model.sampling='trust' model.threshold=0.85
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.85
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.9
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.9
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=0.95
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=0.95
-
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='random' model.threshold=1.0
-python ../test.py ckpt_path="/home/compu/jh/project/colon/logs/runs/2022-02-26/02-35-42/checkpoints/epoch_012.ckpt" model.decide_by_total_probs=True model.weighted_sum=True model.key='ent' model.sampling='trust' model.threshold=1.0
+#WANDB_START_METHOD=thread python ../test.py -m ckpt_path="/home/compu/jh/project/colon_compare/scripts/logs/experiments/runs/default/2022-05-05_03-02-51/checkpoints/epoch_008.ckpt" model.decide_by_total_probs=True,False model.weighted_sum=True,False model.key='prob','ent' model.sampling='random','convinced' model.threshold=0.5,0.55,0.6,0.65,0.7,0.75,0.8,0.85 model.num_sample=10,20,30,40,50
+#WANDB_START_METHOD=thread python ../test.py -m ckpt_path="/home/compu/jh/project/colon_compare/scripts/logs/experiments/runs/default/2022-05-05_03-02-51/checkpoints/epoch_008.ckpt" model.decide_by_total_probs=True,False model.weighted_sum=True,False model.key='ent' model.sampling='random','convinced' model.threshold=0.9,0.95,1.0 model.num_sample=10,20,30,40,50
+WANDB_START_METHOD=thread python ../train.py -m datamodule=gastric.yaml model=gastric.yaml logger.wandb.project='gastric' model.name='vit_base_patch16_384','vit_base_patch32_384','vit_base_r50_s16_384','vit_large_patch16_384','vit_large_patch32_384','vit_large_r50_s32_384' model.scheduler='ReduceLROnPlateau','CosineAnnealingLR','CosineAnnealingWarmRestarts','StepLR','ExponentialLR' logger.wandb.tags=['only_classification']
+#WANDB_START_METHOD=thread python ../train.py -m datamodule=gastric.yaml model=gastric.yaml logger.wandb.project='gastric' model.name='vit_base_patch16_384','vit_base_patch32_384','vit_base_r50_s16_384','vit_large_patch16_384','vit_large_patch32_384','vit_large_r50_s32_384' model.scheduler='ReduceLROnPlateau','CosineAnnealingLR','CosineAnnealingWarmRestarts','StepLR','ExponentialLR' logger.wandb.tags=['classification+compare']

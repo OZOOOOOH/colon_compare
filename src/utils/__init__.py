@@ -9,7 +9,8 @@ from pytorch_lightning.utilities import rank_zero_only
 import pandas as pd
 import math
 from torch.optim.lr_scheduler import _LRScheduler
-
+import random
+import torch
 
 def get_logger(name=__name__) -> logging.Logger:
     """Initializes multi-GPU-friendly python command line logger."""
@@ -155,22 +156,93 @@ def finish(
     """Makes sure everything closed properly."""
 
     # without this sweeps with wandb logger might crash!
+    print('activate finish')
     for lg in logger:
         if isinstance(lg, pl.loggers.wandb.WandbLogger):
             import wandb
-
+            print('wandb finish')
             wandb.finish()
 
 
 def bring_dataset_csv(datatype, stage=None):
     # Directories
-    PATH = f"/home/compu/jh/data/colon_tma/{datatype}/"
+    path = f"/home/compu/jh/data/colon_tma/{datatype}/"
 
     if stage != "fit" and stage is not None:
-        return pd.read_csv(PATH + "test.csv")
-    df_train = pd.read_csv(PATH + "train.csv")
-    df_val = pd.read_csv(PATH + "valid.csv")
+        return pd.read_csv(path + "test.csv")
+    df_train = pd.read_csv(path + "train.csv")
+    df_val = pd.read_csv(path + "valid.csv")
     return df_train, df_val
+
+
+def bring_gastirc_dataset_csv(stage=None):
+    # Directories
+    path = "/home/compu/jh/data/gastric/"
+
+    if stage != "fit" and stage is not None:
+        return pd.read_csv(f"{path}class4_step10_ds_test.csv")
+    df_train = pd.read_csv(f"{path}class4_step05_ds_train.csv")
+    df_val = pd.read_csv(f"{path}class4_step10_ds_valid.csv")
+    return df_train, df_val
+
+
+def get_shuffled_label(x, y):
+    pair = list(enumerate(list(pair) for pair in zip(x, y)))
+    pair = random.sample(pair, len(pair))
+    indices, pair = zip(*pair)
+    indices = list(indices)
+    pair = list(pair)
+    shuffle_y = [i[1] for i in pair]
+    shuffle_y = torch.stack(shuffle_y, dim=0)
+
+    return indices, shuffle_y
+
+
+def vote_results(result_0, result_1, result_2, result_3):
+    vote_cnt_0 = 0
+    vote_cnt_1 = 0
+    vote_cnt_2 = 0
+    vote_cnt_3 = 0
+    vote_cnt_else = 0
+    for i in result_0:
+        if i == 0:
+            vote_cnt_1 += 1
+            vote_cnt_2 += 1
+            vote_cnt_3 += 1
+        elif i == 1:
+            vote_cnt_0 += 1
+        else:
+            vote_cnt_else += 1
+    print(f'In result_0: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    for i in result_1:
+        if i == 0:
+            vote_cnt_2 += 1
+            vote_cnt_3 += 1
+        elif i == 1:
+            vote_cnt_1 += 1
+        elif i == 2:
+            vote_cnt_0 += 1
+    print(f'In result_1: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    for i in result_2:
+        if i == 0:
+            vote_cnt_3 += 1
+        elif i == 1:
+            vote_cnt_2 += 1
+        elif i == 2:
+            vote_cnt_0 += 1
+            vote_cnt_1 += 1
+    print(f'In result_2: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    for i in result_3:
+        if i == 0:
+            vote_cnt_else += 1
+        elif i == 1:
+            vote_cnt_3 += 1
+        elif i == 2:
+            vote_cnt_0 += 1
+            vote_cnt_1 += 1
+            vote_cnt_2 += 1
+    print(f'In result_3: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    return [vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3]
 
 
 class CosineAnnealingWarmUpRestarts(_LRScheduler):

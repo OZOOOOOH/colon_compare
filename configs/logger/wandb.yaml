@@ -12,4 +12,8 @@ wandb:
   prefix: ""
   job_type: "train"
   group: ""
-  tags: []
+#  tags: ['multirun','test']
+  tags: null
+  reinit: True
+#  settings: wandb.Settings(start_method="thread")
+

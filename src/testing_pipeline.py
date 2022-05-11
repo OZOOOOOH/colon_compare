@@ -38,13 +38,14 @@ def test(config: DictConfig) -> None:
     log.info(f"Instantiating model <{config.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(config.model)
 
-    # config.logger
     if 'logger' in config and list(config['logger'].keys())[0] == 'wandb':
         config.logger.wandb.name = config.model.key + str(config.model.threshold) + '_threshold_' \
                                    + config.model.sampling + '_Sampling_' + 'weighted_sum_' \
-                                   + str(config.model.weighted_sum) + '_decide_total_probs_' + str(config.model.decide_by_total_probs) \
-                                   + '_NumSample_' + str(config.model.num_sample)
-
+                                   + str(config.model.weighted_sum) + '_decide_total_probs_' \
+                                   + str(config.model.decide_by_total_probs) + '_NumSample_' \
+                                   + str(config.model.num_sample) + '_discriminator3' + '_batch_size_' \
+                                   + str(config.datamodule.batch_size)
+    # Init lightning loggers
     logger: List[LightningLoggerBase] = []
     if "logger" in config:
         for _, lg_conf in config.logger.items():
@@ -62,4 +63,14 @@ def test(config: DictConfig) -> None:
 
     log.info("Starting testing!")
     trainer.test(model=model, datamodule=datamodule, ckpt_path=config.ckpt_path)
-    # trainer.test(model=model, datamodule=datamodule)
+    import wandb
+    wandb.finish()
+    print('wandb finish')
+
+    # utils.finish(
+    #     config=config,
+    #     model=model,
+    #     datamodule=datamodule,
+    #     trainer=trainer,
+    #     logger=logger,
+    # )

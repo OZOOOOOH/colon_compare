@@ -1,4 +1,4 @@
-_target_: src.models.colon_module.ColonLitModule
+_target_: src.models.gastric_module.GastricLitModule
 
 name: vit_large_r50_s32_384
 

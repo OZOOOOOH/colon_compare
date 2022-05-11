@@ -10,14 +10,14 @@ import random
 import numpy as np
 from torch.utils.data import DataLoader
 import pandas as pd
-from src.datamodules.colon_datamodule import CustomDataset
+from src.datamodules.gastric_datamodule import CustomDataset
 from src.utils import vote_results, get_shuffled_label
 import copy
 from scipy.stats import entropy
 import operator
 
 
-class ColonLitModule(LightningModule):
+class GastricLitModule(LightningModule):
     def __init__(
             self,
             lr: float = 1e-4,
@@ -41,11 +41,10 @@ class ColonLitModule(LightningModule):
             decide_by_total_probs=False,
             weighted_sum=False
     ):
-        super(ColonLitModule, self).__init__()
+        super(GastricLitModule, self).__init__()
         self.save_hyperparameters(logger=False)
 
         self.model = timm.create_model(self.hparams.name, pretrained=self.hparams.pretrained, num_classes=4)
-        self.compare_layer = nn.Linear(self.model.embed_dim * 2, 3)
         self.discriminator_layer1 = nn.Sequential(
             nn.Linear(self.model.head.in_features, 512),
             nn.LeakyReLU(0.2, inplace=True),
@@ -53,26 +52,26 @@ class ColonLitModule(LightningModule):
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(256, 4),
         )
-        self.discriminator_layer2 = nn.Sequential(
-            nn.Linear(self.model.head.in_features * 2, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 3),
-        )
-        self.fc_layer = nn.Sequential(
-            nn.Linear(self.model.head.in_features, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
-        self.discriminator_layer3 = nn.Sequential(
-            nn.Linear(512 * 2, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 128),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(128, 3),
-        )
+        # self.discriminator_layer2 = nn.Sequential(
+        #     nn.Linear(self.model.head.in_features * 2, 512),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(512, 256),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(256, 3),
+        # )
+        # self.fc_layer = nn.Sequential(
+        #     nn.Linear(self.model.head.in_features, 512),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        # )
+        # self.discriminator_layer3 = nn.Sequential(
+        #     nn.Linear(512 * 2, 512),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(512, 256),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(256, 128),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(128, 3),
+        # )
 
         # discriminator 구조
         # 레이어 - 드롭아웃 - 레이어
@@ -298,6 +297,7 @@ class ColonLitModule(LightningModule):
         return result_list
 
     def predict_using_voting(self, entopy_4cls, max_probs_4cls, features, total_imgs, probs_4cls, preds_4cls, y):
+        # sourcery no-metrics
 
         imgs_0, imgs_1, imgs_2, imgs_3 = total_imgs
         cnt_correct_diff = 0
@@ -394,7 +394,7 @@ class ColonLitModule(LightningModule):
 
         return losses, preds, y, preds_compare, comparison
 
-    def step_test0(self, batch,stage):  # only classification
+    def step_test0(self, batch):  # only classification
         x, y = batch
         logits = self.forward(x)
         loss = self.criterion(logits, y)
@@ -503,43 +503,44 @@ class ColonLitModule(LightningModule):
             batch)
         # loss, logits, logits_compare, preds, preds_compare, comparison, targets, shuffle_targets = self.step_test1(
         #     batch)
+        loss, logits, preds, targets = self.step_test0(batch)
         # loss, preds, targets, preds_compare, comparison = self.step_after_concat(batch)
 
-        origin_acc = self.test_acc(origin_preds_4cls, targets)
-        new_acc = self.test_acc(new_preds_4cls, targets)
-        # acc = self.test_acc(preds, targets)
+        # origin_acc = self.test_acc(origin_preds_4cls, targets)
+        # new_acc = self.test_acc(new_preds_4cls, targets)
+        acc = self.test_acc(preds, targets)
         # acc_compare = self.test_acc_compare(preds_compare, comparison)
         self.log("test/loss", loss, on_step=False, on_epoch=True)
-        self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
-        self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
-        # self.log("test/acc", acc, on_step=False, on_epoch=True)
+        # self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
+        # self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
+        self.log("test/acc", acc, on_step=False, on_epoch=True)
         # self.log("test/acc_compare", acc_compare, on_step=False, on_epoch=True)
-        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
-        return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds_4cls,
-                "new_preds_4cls": new_preds_4cls, "targets": targets, "cnt_diff": cnt_diff,
-                "cnt_correct_diff": cnt_correct_diff}
+        return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
+        # return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds_4cls,
+        #         "new_preds_4cls": new_preds_4cls, "targets": targets, "cnt_diff": cnt_diff,
+        #         "cnt_correct_diff": cnt_correct_diff}
 
     def test_epoch_end(self, outputs):
         # pass
-        # preds = torch.cat([i['preds'] for i in outputs], 0)
-        # targets = torch.cat([i['targets'] for i in outputs], 0)
-
-        preds = torch.cat([i['new_preds_4cls'] for i in outputs], 0)
+        preds = torch.cat([i['preds'] for i in outputs], 0)
         targets = torch.cat([i['targets'] for i in outputs], 0)
+
+        # preds = torch.cat([i['new_preds_4cls'] for i in outputs], 0)
+        # targets = torch.cat([i['targets'] for i in outputs], 0)
 
         acc = accuracy(preds, targets, num_classes=4)
         f1score_macro = f1_score(preds, targets, num_classes=4, average='macro')
         qwkappa = cohen_kappa(preds, targets, num_classes=4, weights='quadratic')
 
-        cnt_diff = sum(i['cnt_diff'] for i in outputs)
-        cnt_correct_diff = sum(i['cnt_correct_diff'] for i in outputs)
-        cnt_diff = cnt_diff.sum()
+        # cnt_diff = sum(i['cnt_diff'] for i in outputs)
+        # cnt_correct_diff = sum(i['cnt_correct_diff'] for i in outputs)
+        # cnt_diff = cnt_diff.sum()
 
         self.log("test/acc", acc, on_step=False, on_epoch=True)
         self.log("test/f1_macro", f1score_macro, on_step=False, on_epoch=True)
         self.log("test/wqKappa", qwkappa, on_step=False, on_epoch=True)
-        self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
 
     # def test_epoch_end(self, outputs):
     #     # pass

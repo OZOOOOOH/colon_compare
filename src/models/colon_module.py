@@ -1,6 +1,7 @@
 from typing import Any, List
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import timm
 from pytorch_lightning import LightningModule
 from torchmetrics import MaxMetric
@@ -11,7 +12,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 import pandas as pd
 from src.datamodules.colon_datamodule import CustomDataset
-from src.utils import vote_results, get_shuffled_label
+from src.utils import vote_results, get_shuffled_label, dist_indexing
 import copy
 from scipy.stats import entropy
 import operator
@@ -60,19 +61,19 @@ class ColonLitModule(LightningModule):
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(256, 3),
         )
-        self.fc_layer = nn.Sequential(
-            nn.Linear(self.model.head.in_features, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
-        self.discriminator_layer3 = nn.Sequential(
-            nn.Linear(512 * 2, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 128),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(128, 3),
-        )
+        # self.fc_layer = nn.Sequential(
+        #     nn.Linear(self.model.head.in_features, 512),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        # )
+        # self.discriminator_layer3 = nn.Sequential(
+        #     nn.Linear(512 * 2, 512),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(512, 256),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(256, 128),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Linear(128, 3),
+        # )
 
         # discriminator 구조
         # 레이어 - 드롭아웃 - 레이어
@@ -163,7 +164,7 @@ class ColonLitModule(LightningModule):
                              })
         dataloader_0 = DataLoader(
             CustomDataset(df_0, self.trainer.datamodule.train_transform),
-            batch_size=10,
+            batch_size=16,
             num_workers=0,
             pin_memory=False,
             drop_last=False,
@@ -171,7 +172,7 @@ class ColonLitModule(LightningModule):
         )
         dataloader_1 = DataLoader(
             CustomDataset(df_1, self.trainer.datamodule.train_transform),
-            batch_size=10,
+            batch_size=16,
             num_workers=0,
             pin_memory=False,
             drop_last=False,
@@ -179,7 +180,7 @@ class ColonLitModule(LightningModule):
         )
         dataloader_2 = DataLoader(
             CustomDataset(df_2, self.trainer.datamodule.train_transform),
-            batch_size=10,
+            batch_size=16,
             num_workers=0,
             pin_memory=False,
             drop_last=False,
@@ -187,7 +188,7 @@ class ColonLitModule(LightningModule):
         )
         dataloader_3 = DataLoader(
             CustomDataset(df_3, self.trainer.datamodule.train_transform),
-            batch_size=10,
+            batch_size=16,
             num_workers=0,
             pin_memory=False,
             drop_last=False,
@@ -274,28 +275,52 @@ class ColonLitModule(LightningModule):
         return self.get_convinced(x, dataloader_0), self.get_convinced(x, dataloader_1), \
                self.get_convinced(x, dataloader_2), self.get_convinced(x, dataloader_3)
 
+    def compare_cos_similarity_test_with_trained(self, idx, features, imgs):
+        # compare trained and test labels
+
+        trained_features = self.model.forward_features(imgs)
+
+        return F.cosine_similarity(trained_features, features, 1)
+
     def compare_test_with_trained(self, idx, features, imgs):
         # compare trained and test labels
-        result_list = []
-        for img in imgs:
-            trained_features = self.model.forward_features(img.unsqueeze(0).float())
-            concat_test_with_trained_features = torch.cat((features[idx].unsqueeze(0), trained_features), dim=1)
-            logits_compare = self.discriminator_layer2(concat_test_with_trained_features)
-            pred = torch.argmax(logits_compare, dim=1)
-            result_list.append(pred)
-        return result_list
+
+        trained_features = self.model.forward_features(imgs)
+        concat_test_with_trained_features = torch.cat((features, trained_features), dim=1)
+        logits_compare = self.discriminator_layer2(concat_test_with_trained_features)
+        return torch.argmax(logits_compare, dim=1)
 
     def compare_test_with_trained2(self, idx, features, imgs):
         # compare trained and test labels
-        result_list = []
-        for img in imgs:
-            trained_features = self.model.forward_features(img.unsqueeze(0).float())
-            concat_test_with_trained_features = torch.cat(
-                (self.fc_layer(features[idx].unsqueeze(0)), self.fc_layer(trained_features)), dim=1)
-            logits_compare = self.discriminator_layer3(concat_test_with_trained_features)
-            pred = torch.argmax(logits_compare, dim=1)
-            result_list.append(pred)
-        return result_list
+
+        trained_features = self.model.forward_features(imgs)
+        concat_test_with_trained_features = torch.cat((self.fc_layer(features), self.fc_layer(trained_features)), dim=1)
+        logits_compare = self.discriminator_layer3(concat_test_with_trained_features)
+        return torch.argmax(logits_compare, dim=1)
+
+    def predict_using_voting_cosine(self, entopy_4cls, max_probs_4cls, features, total_imgs, probs_4cls, preds_4cls, y):
+
+        imgs_0, imgs_1, imgs_2, imgs_3 = total_imgs
+        cnt_correct_diff = 0
+        ops = {'ent': operator.gt, 'prob': operator.lt}
+        # gt: > , lt: <
+        threshold_key = entopy_4cls if self.hparams.key == 'ent' else max_probs_4cls.values
+        for idx, value in enumerate(threshold_key):
+            if ops[self.hparams.key](value, self.hparams.threshold):
+                result_0 = self.compare_cos_similarity_test_with_trained(idx, features, imgs_0)
+                result_1 = self.compare_cos_similarity_test_with_trained(idx, features, imgs_1)
+                result_2 = self.compare_cos_similarity_test_with_trained(idx, features, imgs_2)
+                result_3 = self.compare_cos_similarity_test_with_trained(idx, features, imgs_3)
+                cosine_result = torch.argmax(torch.stack([result_0, result_1, result_2, result_3], 0), 0)
+                # compare train imgs with test imgs // batch size
+
+                # class based on voting
+                if preds_4cls[idx].detach().cpu().item() != cosine_result[idx]:
+                    if cosine_result[idx] == y[idx]:
+                        cnt_correct_diff += 1
+
+                preds_4cls[idx] = torch.Tensor([cosine_result[idx]]).type_as(y)
+        return cnt_correct_diff, preds_4cls
 
     def predict_using_voting(self, entopy_4cls, max_probs_4cls, features, total_imgs, probs_4cls, preds_4cls, y):
 
@@ -306,10 +331,11 @@ class ColonLitModule(LightningModule):
         threshold_key = entopy_4cls if self.hparams.key == 'ent' else max_probs_4cls.values
         for idx, value in enumerate(threshold_key):
             if ops[self.hparams.key](value, self.hparams.threshold):
-                result_0 = torch.cat(self.compare_test_with_trained2(idx, features, imgs_0), dim=0)
-                result_1 = torch.cat(self.compare_test_with_trained2(idx, features, imgs_1), dim=0)
-                result_2 = torch.cat(self.compare_test_with_trained2(idx, features, imgs_2), dim=0)
-                result_3 = torch.cat(self.compare_test_with_trained2(idx, features, imgs_3), dim=0)
+                result_0 = self.compare_test_with_trained(idx, features, imgs_0)
+                result_1 = self.compare_test_with_trained(idx, features, imgs_1)
+                result_2 = self.compare_test_with_trained(idx, features, imgs_2)
+                result_3 = self.compare_test_with_trained(idx, features, imgs_3)
+
                 # compare train imgs with test imgs // batch size
                 vote_cnt = vote_results(result_0, result_1, result_2, result_3)
                 total_score = sum(vote_cnt)
@@ -394,7 +420,7 @@ class ColonLitModule(LightningModule):
 
         return losses, preds, y, preds_compare, comparison
 
-    def step_test0(self, batch,stage):  # only classification
+    def step_test0(self, batch, stage):  # only classification
         x, y = batch
         logits = self.forward(x)
         loss = self.criterion(logits, y)
@@ -413,7 +439,6 @@ class ColonLitModule(LightningModule):
         # size of shuffle_feature is [16, 768]
 
         concat_features = torch.cat((features, shuffle_features), dim=1)
-
         logits_compare = self.discriminator_layer2(concat_features)
         # logits_compare = self.compare_layer(concat_features)
         loss_compare = self.criterion(logits_compare, comparison)
@@ -437,8 +462,9 @@ class ColonLitModule(LightningModule):
             x) if self.hparams.sampling == 'random' else self.bring_convinced_trained_data(x)
 
         total_imgs = [imgs_0, imgs_1, imgs_2, imgs_3]
-        cnt_correct_diff, new_preds_4cls = self.predict_using_voting(entropy_4cls, max_probs_4cls, features, total_imgs,
-                                                                     probs_4cls, preds_4cls, y)
+        cnt_correct_diff, new_preds_4cls = self.predict_using_voting_cosine(entropy_4cls, max_probs_4cls, features,
+                                                                            total_imgs,
+                                                                            probs_4cls, preds_4cls, y)
         cnt_diff = sum(x != y for x, y in zip(origin_preds_4cls, new_preds_4cls))
         # print(f'length of preds : {len(origin_preds_4cls)} // The number of changed : {cnt_diff}')
 
@@ -447,21 +473,58 @@ class ColonLitModule(LightningModule):
 
         return loss, logits_4cls, origin_preds_4cls, new_preds_4cls, y, cnt_diff, cnt_correct_diff
 
+    def step_test3(self, batch):  # only classification
+        x, y = batch
+        features = self.model.forward_features(x.float())
+        shuffle_indices, comparison, shuffle_y = self.shuffle_batch(x, y)
+        shuffle_features = torch.stack([features[i] for i in shuffle_indices], dim=0)
+        concat_features = torch.cat((features, shuffle_features), dim=1)
+        logits_compare = self.discriminator_layer2(concat_features)
+        loss_compare = self.criterion(logits_compare, comparison)
+        preds_compare = torch.argmax(logits_compare, dim=1)
+        return loss_compare, logits_compare, preds_compare, comparison
+
+    def step_triplet(self, batch):
+        x, y = batch
+        features = self.model.forward_features(x.float())
+        logits_4cls = self.discriminator_layer1(features)
+        loss_4cls = self.criterion(logits_4cls, y)
+        preds_4cls = torch.argmax(logits_4cls, dim=1)
+
+        shuffle_indices, comparison, shuffle_y = self.shuffle_batch(x, y)
+        shuffle_features = torch.stack([features[i] for i in shuffle_indices], dim=0)
+        dist_matrix = torch.cdist(features, shuffle_features, p=2)
+        y_idx_groupby = [torch.where(y == i)[0].tolist() for i in range(4)]
+        dist_indices = dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix)
+        dist_features = torch.stack([features[i] for i in dist_indices], dim=0)
+        concat_features = torch.cat((features, dist_features), dim=1)
+
+        logits_compare = self.discriminator_layer2(concat_features)
+        loss_compare = self.criterion(logits_compare, comparison)
+        preds_compare = torch.argmax(logits_compare, dim=1)
+
+        loss = loss_4cls + loss_compare * self.hparams.loss_weight
+
+        return loss, preds_4cls, preds_compare, comparison, y
+
+
     def training_step(self, batch, batch_idx):
-        loss, logits, preds, targets = self.step_test0(batch)
-        # loss, preds, targets, preds_compare, comparison = self.step_after_concat(batch)
-        acc = self.train_acc(preds=preds, target=targets)
-        # acc_compare = self.train_acc_compare(preds=preds_compare, target=comparison)
+        # loss, logits, preds, targets = self.step_test3(batch)
+        # loss_compare, logits_compare, preds_compare, comparison= self.step_triplet(batch)
+        # loss, logits, preds, targets = self.step_test0(batch)
+
+        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_triplet(batch)
+        acc = self.train_acc(preds=preds_4cls, target=target_4cls)
+        acc_compare = self.train_acc_compare(preds=preds_compare, target=comparison)
 
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=False)
         self.log("train/acc", acc, on_step=True, on_epoch=True, prog_bar=True)
-        # self.log("train/acc_compare", acc_compare, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/acc_compare", acc_compare, on_step=True, on_epoch=True, prog_bar=True)
         self.log("LearningRate", self.optimizer.param_groups[0]['lr'])
 
-        return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
-        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets, "acc_compare": acc_compare,
-        #         "preds_compare": preds_compare, "comparison": comparison}
-
+        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
+        return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls, "acc_compare": acc_compare,
+                "preds_compare": preds_compare, "comparison": comparison}
 
     def training_epoch_end(self, outputs: List[Any]):
         # `outputs` is a list of dicts returned from `training_step()`
@@ -472,19 +535,19 @@ class ColonLitModule(LightningModule):
             sch.step(self.trainer.callback_metrics["val/loss"])
 
     def validation_step(self, batch, batch_idx):
+        # loss, logits, preds, targets = self.step_test3(batch)
+        # loss, logits, preds, targets = self.step_test0(batch)
+        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_triplet(batch)
 
-        loss, logits, preds, targets = self.step_test0(batch)
-        # loss, preds, targets, preds_compare, comparison = self.step_after_concat(batch)
-
-        acc = self.val_acc(preds, targets)
-        # acc_compare = self.val_acc_compare(preds=preds_compare, target=comparison)
+        acc = self.val_acc(preds_4cls, target_4cls)
+        acc_compare = self.val_acc_compare(preds=preds_compare, target=comparison)
 
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("val/acc_compare", acc_compare, on_step=False, on_epoch=True, prog_bar=True)
-        return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
-        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets, "acc_compare": preds_compare,
-        #         "preds_compare": preds_compare, "comparison": comparison}
+        self.log("val/acc_compare", acc_compare, on_step=False, on_epoch=True, prog_bar=True)
+        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
+        return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls, "acc_compare": preds_compare,
+                "preds_compare": preds_compare, "comparison": comparison}
 
     def validation_epoch_end(self, outputs):
         # called at the end of the validation epoch
@@ -493,53 +556,54 @@ class ColonLitModule(LightningModule):
         acc = self.val_acc.compute()
         self.val_acc_best.update(acc)
 
-        # acc_compare = self.val_acc_compare.compute()
-        # self.val_acc_compare_best.update(acc_compare)
+        acc_compare = self.val_acc_compare.compute()
+        self.val_acc_compare_best.update(acc_compare)
         self.log("val/acc_best", self.val_acc_best.compute(), on_epoch=True, prog_bar=True)
-        # self.log("val/acc_compare_best", self.val_acc_compare_best.compute(), on_epoch=True, prog_bar=True)
+        self.log("val/acc_compare_best", self.val_acc_compare_best.compute(), on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
-        loss, logits_4cls, origin_preds_4cls, new_preds_4cls, targets, cnt_diff, cnt_correct_diff = self.step_test2(
-            batch)
+        # loss, logits, preds, targets = self.step_test3(batch)
+        # loss, logits_4cls, origin_preds_4cls, new_preds_4cls, targets, cnt_diff, cnt_correct_diff = self.step_test2(
+        #     batch)
         # loss, logits, logits_compare, preds, preds_compare, comparison, targets, shuffle_targets = self.step_test1(
         #     batch)
-        # loss, preds, targets, preds_compare, comparison = self.step_after_concat(batch)
+        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_triplet(batch)
 
-        origin_acc = self.test_acc(origin_preds_4cls, targets)
-        new_acc = self.test_acc(new_preds_4cls, targets)
-        # acc = self.test_acc(preds, targets)
-        # acc_compare = self.test_acc_compare(preds_compare, comparison)
+        # origin_acc = self.test_acc(origin_preds_4cls, targets)
+        # new_acc = self.test_acc(new_preds_4cls, targets)
+        acc = self.test_acc(preds_4cls, target_4cls)
+        acc_compare = self.test_acc_compare(preds_compare, comparison)
         self.log("test/loss", loss, on_step=False, on_epoch=True)
-        self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
-        self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
-        # self.log("test/acc", acc, on_step=False, on_epoch=True)
-        # self.log("test/acc_compare", acc_compare, on_step=False, on_epoch=True)
-        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
-        return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds_4cls,
-                "new_preds_4cls": new_preds_4cls, "targets": targets, "cnt_diff": cnt_diff,
-                "cnt_correct_diff": cnt_correct_diff}
+        # self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
+        # self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
+        self.log("test/acc", acc, on_step=False, on_epoch=True)
+        self.log("test/acc_compare", acc_compare, on_step=False, on_epoch=True)
+        return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls}
+        # return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds_4cls,
+        #         "new_preds_4cls": new_preds_4cls, "targets": targets, "cnt_diff": cnt_diff,
+        #         "cnt_correct_diff": cnt_correct_diff}
 
     def test_epoch_end(self, outputs):
         # pass
-        # preds = torch.cat([i['preds'] for i in outputs], 0)
-        # targets = torch.cat([i['targets'] for i in outputs], 0)
-
-        preds = torch.cat([i['new_preds_4cls'] for i in outputs], 0)
+        preds = torch.cat([i['preds'] for i in outputs], 0)
         targets = torch.cat([i['targets'] for i in outputs], 0)
 
-        acc = accuracy(preds, targets, num_classes=4)
+        # preds = torch.cat([i['new_preds_4cls'] for i in outputs], 0)
+        # targets = torch.cat([i['targets'] for i in outputs], 0)
+
+        # acc = accuracy(preds, targets, num_classes=4)
         f1score_macro = f1_score(preds, targets, num_classes=4, average='macro')
         qwkappa = cohen_kappa(preds, targets, num_classes=4, weights='quadratic')
 
-        cnt_diff = sum(i['cnt_diff'] for i in outputs)
-        cnt_correct_diff = sum(i['cnt_correct_diff'] for i in outputs)
-        cnt_diff = cnt_diff.sum()
-
-        self.log("test/acc", acc, on_step=False, on_epoch=True)
+        # cnt_diff = sum(i['cnt_diff'] for i in outputs)
+        # cnt_correct_diff = sum(i['cnt_correct_diff'] for i in outputs)
+        # cnt_diff = cnt_diff.sum()
+        #
+        # self.log("test/acc", acc, on_step=False, on_epoch=True)
         self.log("test/f1_macro", f1score_macro, on_step=False, on_epoch=True)
         self.log("test/wqKappa", qwkappa, on_step=False, on_epoch=True)
-        self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        # self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
 
     # def test_epoch_end(self, outputs):
     #     # pass

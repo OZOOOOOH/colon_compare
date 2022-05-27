@@ -11,6 +11,8 @@ import math
 from torch.optim.lr_scheduler import _LRScheduler
 import random
 import torch
+from functools import reduce
+
 
 def get_logger(name=__name__) -> logging.Logger:
     """Initializes multi-GPU-friendly python command line logger."""
@@ -156,11 +158,9 @@ def finish(
     """Makes sure everything closed properly."""
 
     # without this sweeps with wandb logger might crash!
-    print('activate finish')
     for lg in logger:
         if isinstance(lg, pl.loggers.wandb.WandbLogger):
             import wandb
-            print('wandb finish')
             wandb.finish()
 
 
@@ -243,6 +243,20 @@ def vote_results(result_0, result_1, result_2, result_3):
             vote_cnt_2 += 1
     print(f'In result_3: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
     return [vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3]
+
+
+def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
+    indices = []
+    for i, (yV, shuffleV) in enumerate(zip(y, shuffle_y)):
+        if yV == shuffleV:
+            indices.append(y_idx_groupby[yV][dist_matrix[i][y_idx_groupby[yV]].argmax()])
+        elif yV > shuffleV:
+            flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[:yV])
+            indices.append(flatten_[dist_matrix[i][flatten_].argmin()])
+        else:
+            flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[yV + 1:])
+            indices.append(flatten_[dist_matrix[i][flatten_].argmin()])
+    return indices
 
 
 class CosineAnnealingWarmUpRestarts(_LRScheduler):

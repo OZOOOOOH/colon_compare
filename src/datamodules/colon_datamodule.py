@@ -180,7 +180,7 @@ class ColonDataModule(LightningDataModule):
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             drop_last=True,
-            shuffle=True,
+            shuffle=False,
             # sampler=ImbalancedDatasetSampler(self.train_dataset),
         )
 

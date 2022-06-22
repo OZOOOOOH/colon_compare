@@ -12,6 +12,10 @@ from torch.optim.lr_scheduler import _LRScheduler
 import random
 import torch
 from functools import reduce
+from torch.nn.functional import pairwise_distance
+from torch.nn import _reduction as _Reduction
+from typing import Callable, Optional
+from torch import nn
 
 
 def get_logger(name=__name__) -> logging.Logger:
@@ -259,6 +263,13 @@ def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
     return indices
 
 
+def params_freeze(model):
+    model.blocks[22:].requires_grad_(False)
+    for name, param in model.named_parameters():
+        param.requires_grad = 'head' in name
+        param.requires_grad = 'norm' in name
+
+
 class CosineAnnealingWarmUpRestarts(_LRScheduler):
     def __init__(self, optimizer, T_0, T_mult=1, eta_max=0.1, T_up=0, gamma=1., last_epoch=-1):
         if T_0 <= 0 or not isinstance(T_0, int):
@@ -313,3 +324,141 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
         self.last_epoch = math.floor(epoch)
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group['lr'] = lr
+
+
+def triplet_margin_with_distance_loss(
+        anchor: torch.Tensor,
+        positive: torch.Tensor,
+        negative: torch.Tensor,
+        *,
+        distance_function: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        margin: float = 1.0,
+        swap: bool = False,
+        reduction: str = "mean"
+) -> torch.Tensor:
+    r"""
+    See :class:`~torch.nn.TripletMarginWithDistanceLoss` for details.
+    """
+    if torch.jit.is_scripting():
+        raise NotImplementedError(
+            "F.triplet_margin_with_distance_loss does not support JIT scripting: "
+            "functions requiring Callables cannot be scripted."
+        )
+
+    distance_function = distance_function if distance_function is not None else pairwise_distance
+
+    positive_dist = distance_function(anchor, positive)
+    negative_dist = distance_function(anchor, negative)
+
+    if swap:
+        swap_dist = distance_function(positive, negative)
+        negative_dist = torch.min(negative_dist, swap_dist)
+
+    output = torch.clamp(positive_dist - negative_dist + margin, min=0.0)
+
+    reduction_enum = _Reduction.get_enum(reduction)
+    if reduction_enum == 1:
+        return output.mean()
+    elif reduction_enum == 2:
+        return output.sum()
+    else:
+        return output
+
+
+class TripletLoss(nn.Module):
+    """Triplet loss with hard positive/negative mining.
+
+    Reference:
+    Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
+    Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
+
+    Args:
+    - margin (float): margin for triplet.
+    """
+
+    def __init__(self, margin=0.3):
+        super(TripletLoss, self).__init__()
+        self.margin = margin
+        self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+
+    def forward(self, inputs, targets):
+        """
+        Args:
+        - inputs: feature matrix with shape (batch_size, feat_dim)
+        - targets: ground truth labels with shape (num_classes)
+        """
+        n = inputs.size(0)
+
+        # Compute pairwise distance, replace by the official when merged
+        dist = torch.pow(inputs, 2).sum(dim=1, keepdim=True).expand(n, n)
+        dist = dist + dist.t()
+        dist.addmm_(1, -2, inputs, inputs.t())
+        dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
+
+        # For each anchor, find the hardest positive and negative
+        mask = targets.expand(n, n).eq(targets.expand(n, n).t())
+        dist_ap, dist_an = [], []
+        for i in range(n):
+            dist_ap.append(dist[i][mask[i]].max().unsqueeze(0))
+            dist_an.append(dist[i][mask[i] == 0].min().unsqueeze(0))
+        dist_ap = torch.cat(dist_ap)
+        dist_an = torch.cat(dist_an)
+
+        # Compute ranking hinge loss
+        y = torch.ones_like(dist_an)
+        return self.ranking_loss(dist_an, dist_ap, y)
+        # This is same as " max( D(a,p)-D(a,n) + margin, 0 ) "
+
+
+class TripletLossWithGL(nn.Module):
+    """Triplet loss with hard positive/negative mining and Greater/Less.
+
+    Reference:
+    Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
+    Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
+
+    Args:
+    - margin (float): margin for triplet.
+    """
+
+    def __init__(self, margin=0.3):
+        super(TripletLossWithGL, self).__init__()
+        self.margin = margin
+        self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+
+    def forward(self, inputs, targets):
+        """
+        Args:
+        - inputs: feature matrix with shape (batch_size, feat_dim)
+        - targets: ground truth labels with shape (num_classes)
+        """
+        n = inputs.size(0)
+
+        # Compute pairwise distance, replace by the official when merged
+        dist = torch.pow(inputs, 2).sum(dim=1, keepdim=True).expand(n, n)
+        dist = dist + dist.t()
+        dist.addmm_(1, -2, inputs, inputs.t())
+        dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
+
+        # For each anchor, find the hardest positive and negative
+        mask_eq = torch.mul(targets.expand(n, n).eq(targets.expand(n, n).t()), 1)  # =
+        mask_gt = torch.mul(targets.expand(n, n).gt(targets.expand(n, n).t()), 2)  # <
+        mask_lt = torch.mul(targets.expand(n, n).lt(targets.expand(n, n).t()), 3)  # >
+        mask = mask_eq + mask_gt + mask_lt
+        dist_ap, dist_an_g, dist_an_l = [], [], []
+        # dist_anG: anchor negative greater, dist_anL: anchor negative less,
+        for i in range(n):
+            dist_ap.append(dist[i][mask[i] == 1].max().unsqueeze(0))
+            if dist[i][mask[i] == 2].nelement() == 0:
+                dist_an_g.append(dist[i][mask[i] == 2].min().unsqueeze(0))
+
+            dist_an_g.append(dist[i][mask[i] == 2].min().unsqueeze(0))
+            dist_an_l.append(dist[i][mask[i] == 3].min().unsqueeze(0))
+        dist_ap = torch.cat(dist_ap)
+        dist_an_g = torch.cat(dist_an_g)
+        dist_an_l = torch.cat(dist_an_l)
+
+        # Compute ranking hinge loss
+        y = torch.ones_like(dist_an_g)
+        return self.ranking_loss(abs(dist_an_g - dist_an_l), dist_ap, y)
+        # This is same as " max( D(a,p)-|D(a,n>)-D(a,n<)| + margin, 0 ) "

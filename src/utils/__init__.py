@@ -461,6 +461,8 @@ class TripletLossWithGL(nn.Module):
             else:
                 dist_an_l.append(dist[i][mask[i] == 3].min().unsqueeze(0))
 
+            dist_an_g.append(dist[i][mask[i] == 2].min().unsqueeze(0))
+            dist_an_l.append(dist[i][mask[i] == 3].min().unsqueeze(0))
         dist_ap = torch.cat(dist_ap)
         dist_an_g = torch.cat(dist_an_g)
         dist_an_l = torch.cat(dist_an_l)

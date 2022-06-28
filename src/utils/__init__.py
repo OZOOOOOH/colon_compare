@@ -446,19 +446,31 @@ class TripletLossWithGL(nn.Module):
         mask_lt = torch.mul(targets.expand(n, n).lt(targets.expand(n, n).t()), 3)  # >
         mask = mask_eq + mask_gt + mask_lt
         dist_ap, dist_an_g, dist_an_l = [], [], []
-        # dist_anG: anchor negative greater, dist_anL: anchor negative less,
+        # dist_anG: anchor negative greater, dist_anL: anchor negative less
+
         for i in range(n):
             dist_ap.append(dist[i][mask[i] == 1].max().unsqueeze(0))
-            if dist[i][mask[i] == 2].nelement() == 0:
+
+            if len(dist[i][mask[i] == 2]) == 0:
+                dist_an_g.append(torch.tensor([10000], device=dist[i][mask[i] == 2].device))
+            else:
                 dist_an_g.append(dist[i][mask[i] == 2].min().unsqueeze(0))
 
-            dist_an_g.append(dist[i][mask[i] == 2].min().unsqueeze(0))
-            dist_an_l.append(dist[i][mask[i] == 3].min().unsqueeze(0))
+            if len(dist[i][mask[i] == 3]) == 0:
+                dist_an_l.append(torch.tensor([10000], device=dist[i][mask[i] == 3].device))
+            else:
+                dist_an_l.append(dist[i][mask[i] == 3].min().unsqueeze(0))
+
         dist_ap = torch.cat(dist_ap)
         dist_an_g = torch.cat(dist_an_g)
         dist_an_l = torch.cat(dist_an_l)
 
         # Compute ranking hinge loss
         y = torch.ones_like(dist_an_g)
-        return self.ranking_loss(abs(dist_an_g - dist_an_l), dist_ap, y)
+        loss = 0
+        loss += self.ranking_loss(abs(dist_an_g - dist_an_l), dist_ap, y)
+        loss += self.ranking_loss(dist_an_g, dist_ap, y)
+        loss += self.ranking_loss(dist_an_l, dist_ap, y)
+
+        return torch.div(loss, 3)
         # This is same as " max( D(a,p)-|D(a,n>)-D(a,n<)| + margin, 0 ) "

@@ -82,3 +82,4 @@ key: 'prob'
 sampling: 'random'
 decide_by_total_probs: False
 weighted_sum: False
+margin: 0.5

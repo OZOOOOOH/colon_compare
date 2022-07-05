@@ -10,7 +10,7 @@ precision: 16
 #  find_unused_parameters: True
 strategy: 'ddp'
 accelerator: 'gpu'
-devices: '2,3'
+devices: '4,5'
 #num_sanity_val_steps: 0
 # number of validation steps to execute at the beginning of the training
 # num_sanity_val_steps: 0

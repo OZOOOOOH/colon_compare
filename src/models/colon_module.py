@@ -12,7 +12,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 import pandas as pd
 from src.datamodules.colon_datamodule import CustomDataset
-from src.utils import vote_results, get_shuffled_label, dist_indexing
+from src.utils import vote_results, get_shuffled_label, dist_indexing, TripletLoss, TripletLossWithGL
 import copy
 from scipy.stats import entropy
 import operator
@@ -40,7 +40,8 @@ class ColonLitModule(LightningModule):
             key='ent',
             sampling='random',
             decide_by_total_probs=False,
-            weighted_sum=False
+            weighted_sum=False,
+            margin=0.5,
     ):
         super(ColonLitModule, self).__init__()
         self.save_hyperparameters(logger=False)
@@ -65,16 +66,6 @@ class ColonLitModule(LightningModule):
         #     nn.Linear(self.model.head.in_features, 512),
         #     nn.LeakyReLU(0.2, inplace=True),
         # )
-        # self.discriminator_layer3 = nn.Sequential(
-        #     nn.Linear(512 * 2, 512),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Linear(512, 256),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Linear(256, 128),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Linear(128, 3),
-        # )
-
         # discriminator 구조
         # 레이어 - 드롭아웃 - 레이어
         # 512 512 4 3
@@ -315,9 +306,8 @@ class ColonLitModule(LightningModule):
                 # compare train imgs with test imgs // batch size
 
                 # class based on voting
-                if preds_4cls[idx].detach().cpu().item() != cosine_result[idx]:
-                    if cosine_result[idx] == y[idx]:
-                        cnt_correct_diff += 1
+                if preds_4cls[idx].detach().cpu().item() != cosine_result[idx] and cosine_result[idx] == y[idx]:
+                    cnt_correct_diff += 1
 
                 preds_4cls[idx] = torch.Tensor([cosine_result[idx]]).type_as(y)
         return cnt_correct_diff, preds_4cls
@@ -507,123 +497,74 @@ class ColonLitModule(LightningModule):
 
         return loss, preds_4cls, preds_compare, comparison, y
 
+    def step_triplet2(self, batch):
+        x, y = batch
+        features = self.model.forward_features(x.float())
+        triplet = TripletLossWithGL(margin=self.hparams.margin)
+        loss_triplet = triplet(features, y)
+
+        logits_4cls = self.discriminator_layer1(features)
+        loss_4cls = self.criterion(logits_4cls, y)
+        preds_4cls = torch.argmax(logits_4cls, dim=1)
+
+        loss = loss_4cls + loss_triplet * self.hparams.loss_weight
+
+        return loss, preds_4cls, y
 
     def training_step(self, batch, batch_idx):
-        # loss, logits, preds, targets = self.step_test3(batch)
-        # loss_compare, logits_compare, preds_compare, comparison= self.step_triplet(batch)
-        # loss, logits, preds, targets = self.step_test0(batch)
-
-        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_triplet(batch)
+        loss, preds_4cls, target_4cls = self.step_triplet2(batch)
         acc = self.train_acc(preds=preds_4cls, target=target_4cls)
-        acc_compare = self.train_acc_compare(preds=preds_compare, target=comparison)
 
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=False)
         self.log("train/acc", acc, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("train/acc_compare", acc_compare, on_step=True, on_epoch=True, prog_bar=True)
         self.log("LearningRate", self.optimizer.param_groups[0]['lr'])
 
-        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
-        return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls, "acc_compare": acc_compare,
-                "preds_compare": preds_compare, "comparison": comparison}
+        return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls}
 
     def training_epoch_end(self, outputs: List[Any]):
-        # `outputs` is a list of dicts returned from `training_step()`
+        # ! `outputs` is a list of dicts returned from `training_step()`
         sch = self.lr_schedulers()
 
-        # If the selected scheduler is a ReduceLROnPlateau scheduler.
+        # ! If the selected scheduler is a ReduceLROnPlateau scheduler.
         if isinstance(sch, torch.optim.lr_scheduler.ReduceLROnPlateau):
             sch.step(self.trainer.callback_metrics["val/loss"])
 
     def validation_step(self, batch, batch_idx):
-        # loss, logits, preds, targets = self.step_test3(batch)
-        # loss, logits, preds, targets = self.step_test0(batch)
-        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_triplet(batch)
+        loss, preds_4cls, target_4cls = self.step_triplet2(batch)
 
         acc = self.val_acc(preds_4cls, target_4cls)
-        acc_compare = self.val_acc_compare(preds=preds_compare, target=comparison)
-
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/acc_compare", acc_compare, on_step=False, on_epoch=True, prog_bar=True)
-        # return {"loss": loss, "acc": acc, "preds": preds, "targets": targets}
-        return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls, "acc_compare": preds_compare,
-                "preds_compare": preds_compare, "comparison": comparison}
+        return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls}
 
     def validation_epoch_end(self, outputs):
-        # called at the end of the validation epoch
-        # outputs is an array with what you returned in validation_step for each batch
-        # outputs = [{'loss': batch_0_loss}, {'loss': batch_1_loss}, ..., {'loss': batch_n_loss}]
+        # ! called at the end of the validation epoch
+        # ! outputs is an array with what you returned in validation_step for each batch
+        # ! outputs = [{'loss': batch_0_loss}, {'loss': batch_1_loss}, ..., {'loss': batch_n_loss}]
         acc = self.val_acc.compute()
         self.val_acc_best.update(acc)
 
-        acc_compare = self.val_acc_compare.compute()
-        self.val_acc_compare_best.update(acc_compare)
         self.log("val/acc_best", self.val_acc_best.compute(), on_epoch=True, prog_bar=True)
-        self.log("val/acc_compare_best", self.val_acc_compare_best.compute(), on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
-        # loss, logits, preds, targets = self.step_test3(batch)
-        # loss, logits_4cls, origin_preds_4cls, new_preds_4cls, targets, cnt_diff, cnt_correct_diff = self.step_test2(
-        #     batch)
-        # loss, logits, logits_compare, preds, preds_compare, comparison, targets, shuffle_targets = self.step_test1(
-        #     batch)
-        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_triplet(batch)
+        loss, preds_4cls, target_4cls = self.step_triplet2(batch)
 
-        # origin_acc = self.test_acc(origin_preds_4cls, targets)
-        # new_acc = self.test_acc(new_preds_4cls, targets)
         acc = self.test_acc(preds_4cls, target_4cls)
-        acc_compare = self.test_acc_compare(preds_compare, comparison)
+
         self.log("test/loss", loss, on_step=False, on_epoch=True)
-        # self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
-        # self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
         self.log("test/acc", acc, on_step=False, on_epoch=True)
-        self.log("test/acc_compare", acc_compare, on_step=False, on_epoch=True)
         return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls}
-        # return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds_4cls,
-        #         "new_preds_4cls": new_preds_4cls, "targets": targets, "cnt_diff": cnt_diff,
-        #         "cnt_correct_diff": cnt_correct_diff}
 
     def test_epoch_end(self, outputs):
         # pass
         preds = torch.cat([i['preds'] for i in outputs], 0)
         targets = torch.cat([i['targets'] for i in outputs], 0)
 
-        # preds = torch.cat([i['new_preds_4cls'] for i in outputs], 0)
-        # targets = torch.cat([i['targets'] for i in outputs], 0)
-
-        # acc = accuracy(preds, targets, num_classes=4)
         f1score_macro = f1_score(preds, targets, num_classes=4, average='macro')
         qwkappa = cohen_kappa(preds, targets, num_classes=4, weights='quadratic')
 
-        # cnt_diff = sum(i['cnt_diff'] for i in outputs)
-        # cnt_correct_diff = sum(i['cnt_correct_diff'] for i in outputs)
-        # cnt_diff = cnt_diff.sum()
-        #
-        # self.log("test/acc", acc, on_step=False, on_epoch=True)
         self.log("test/f1_macro", f1score_macro, on_step=False, on_epoch=True)
         self.log("test/wqKappa", qwkappa, on_step=False, on_epoch=True)
-        # self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
-        # self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
-
-    # def test_epoch_end(self, outputs):
-    #     # pass
-    #     probs = [i['probs'] for i in outputs]
-    #     targets = [i['targets'] for i in outputs]
-    #     preds = [i['preds'] for i in outputs]
-    #     max_probs = [i['max_probs'].values for i in outputs]
-    #
-    #     all_entropies = np.concatenate(np.array([i['entropy'] for i in outputs]))
-    #     all_max_probs = torch.cat(max_probs).detach().cpu().numpy()
-    #     all_targets = torch.cat(targets).detach().cpu().numpy()
-    #     all_probs = torch.cat(probs).detach().cpu().numpy()
-    #     all_preds = torch.cat(preds).detach().cpu().numpy()
-    #
-    #     df = pd.DataFrame(all_probs, columns=['cls_0', 'cls_1', 'cls_2', 'cls_3'])
-    #     df['ent'] = all_entropies
-    #     df['max_probs'] = all_max_probs
-    #     df['targets'] = all_targets
-    #     df['preds'] = all_preds
-    #     df.to_csv(f'/home/compu/jh/project/colon_compare/entropy{all_max_probs[0]}.csv')
 
     def on_epoch_end(self):
         self.train_acc.reset()

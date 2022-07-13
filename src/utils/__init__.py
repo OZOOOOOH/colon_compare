@@ -509,27 +509,25 @@ class TripletLossWithGL(nn.Module):
         """
         n = inputs.size(0)
 
-        # Compute pairwise distance
-        # dist = torch.cdist(inputs, inputs, 2).clamp(min=1e-3)
+        # Make a pairwise distance matrix
         dist = torch.cdist(inputs, inputs, 2)
-        # for numerical stability
-
-        # For each anchor, find the hardest positive and negative
+        # Make a relationship mask based on the anchor
         mask_eq = torch.mul(targets.expand(n, n).eq(targets.expand(n, n).t()), 1)  # =
         mask_gt = torch.mul(targets.expand(n, n).gt(targets.expand(n, n).t()), 2)  # <
         mask_lt = torch.mul(targets.expand(n, n).lt(targets.expand(n, n).t()), 3)  # >
         mask = mask_eq + mask_gt + mask_lt
+
         hard_ap, hard_an_g, hard_an_l = [], [], []
         # hard_ap: anchor positive, hard_an_g: anchor negative greater, hard_an_l: anchor negative less
-
         cnt = 0
         for i in range(n):
+            # Get a list of positive & negative values
             dists_ap = dist[i][mask[i] == 1]
             dists_an_g = dist[i][mask[i] == 2]
             dists_an_l = dist[i][mask[i] == 3]
-
             if len(dists_ap) == 1:
                 cnt += 1
+            # For each anchor, find the hardest positive and negative
             hard_ap.append(get_max(dists_ap))
 
             if len(dists_an_g) == 0:

@@ -16,6 +16,9 @@ from torch.nn.functional import pairwise_distance
 from torch.nn import _reduction as _Reduction
 from typing import Callable, Optional
 from torch import nn
+import matplotlib.pyplot as plt
+import seaborn as sns
+import torch.nn.functional as F
 
 
 def get_logger(name=__name__) -> logging.Logger:
@@ -165,6 +168,7 @@ def finish(
     for lg in logger:
         if isinstance(lg, pl.loggers.wandb.WandbLogger):
             import wandb
+
             wandb.finish()
 
 
@@ -217,7 +221,9 @@ def vote_results(result_0, result_1, result_2, result_3):
             vote_cnt_0 += 1
         else:
             vote_cnt_else += 1
-    print(f'In result_0: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    print(
+        f"In result_0: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
+    )
     for i in result_1:
         if i == 0:
             vote_cnt_2 += 1
@@ -226,7 +232,9 @@ def vote_results(result_0, result_1, result_2, result_3):
             vote_cnt_1 += 1
         elif i == 2:
             vote_cnt_0 += 1
-    print(f'In result_1: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    print(
+        f"In result_1: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
+    )
     for i in result_2:
         if i == 0:
             vote_cnt_3 += 1
@@ -235,7 +243,9 @@ def vote_results(result_0, result_1, result_2, result_3):
         elif i == 2:
             vote_cnt_0 += 1
             vote_cnt_1 += 1
-    print(f'In result_2: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    print(
+        f"In result_2: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
+    )
     for i in result_3:
         if i == 0:
             vote_cnt_else += 1
@@ -245,7 +255,9 @@ def vote_results(result_0, result_1, result_2, result_3):
             vote_cnt_0 += 1
             vote_cnt_1 += 1
             vote_cnt_2 += 1
-    print(f'In result_3: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}')
+    print(
+        f"In result_3: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
+    )
     return [vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3]
 
 
@@ -266,12 +278,65 @@ def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
 def params_freeze(model):
     model.blocks[22:].requires_grad_(False)
     for name, param in model.named_parameters():
-        param.requires_grad = 'head' in name
-        param.requires_grad = 'norm' in name
+        param.requires_grad = "head" in name
+        param.requires_grad = "norm" in name
+
+
+def get_distmat_heatmap(df, targets):
+    df = pd.DataFrame(df.detach().cpu().numpy())
+    plt.clf()
+    plt.figure(figsize=(30, 30))
+    confmat_heatmap = sns.heatmap(
+        data=df,
+        cmap="RdYlGn",
+        annot=True,
+        annot_kws={"size": 15},
+        fmt=".2f",
+        xticklabels=targets.detach().cpu().numpy(),
+        yticklabels=targets.detach().cpu().numpy(),
+        cbar=False,
+    )
+
+    confmat_heatmap.xaxis.set_label_position("top")
+    plt.yticks(rotation=0)
+    confmat_heatmap.tick_params(axis="x", which="both", bottom=False)
+
+    return confmat_heatmap.get_figure()
+
+
+def get_confmat(df):
+    df = pd.DataFrame(df.detach().cpu().numpy())
+    plt.clf()  # ADD THIS LINE
+    plt.figure(figsize=(10, 10))
+    confmat_heatmap = sns.heatmap(
+        data=df,
+        cmap="RdYlGn",
+        annot=True,
+        fmt=".3f",
+        cbar=False,
+    )
+    plt.ylabel("True Label")
+    plt.xlabel("Predicted label")
+
+    confmat_heatmap.xaxis.set_label_position("top")
+    plt.yticks(rotation=0)
+    confmat_heatmap.tick_params(axis="x", which="both", bottom=False)
+
+    return confmat_heatmap.get_figure()
+
+
+def get_feature_df(features, targets):
+    cols = [f"feature_{i}" for i in range(features.shape[1])]
+    df = pd.DataFrame(features.detach().cpu().numpy(), columns=cols)
+    label_dict = {0: "BN_0", 1: "WD_1", 2: "MD_2", 3: "PD_3"}
+    df["LABEL"] = targets.detach().cpu().numpy()
+    df["LABEL"] = df["LABEL"].map(label_dict)
+
+    return df
 
 
 class CosineAnnealingWarmUpRestarts(_LRScheduler):
-    def __init__(self, optimizer, T_0, T_mult=1, eta_max=0.1, T_up=0, gamma=1., last_epoch=-1):
+    def __init__(self, optimizer, T_0, T_mult=1, eta_max=0.1, T_up=0, gamma=1.0, last_epoch=-1):
         if T_0 <= 0 or not isinstance(T_0, int):
             raise ValueError(f"Expected positive integer T_0, but got {T_0}")
         if T_mult < 1 or not isinstance(T_mult, int):
@@ -293,11 +358,18 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
         if self.T_cur == -1:
             return self.base_lrs
         elif self.T_cur < self.T_up:
-            return [(self.eta_max - base_lr) * self.T_cur / self.T_up + base_lr for base_lr in self.base_lrs]
+            return [
+                (self.eta_max - base_lr) * self.T_cur / self.T_up + base_lr
+                for base_lr in self.base_lrs
+            ]
         else:
-            return [base_lr + (self.eta_max - base_lr) * (
-                    1 + math.cos(math.pi * (self.T_cur - self.T_up) / (self.T_i - self.T_up))) / 2
-                    for base_lr in self.base_lrs]
+            return [
+                base_lr
+                + (self.eta_max - base_lr)
+                * (1 + math.cos(math.pi * (self.T_cur - self.T_up) / (self.T_i - self.T_up)))
+                / 2
+                for base_lr in self.base_lrs
+            ]
 
     def step(self, epoch=None):
         if epoch is None:
@@ -323,7 +395,7 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
         self.eta_max = self.base_eta_max * (self.gamma ** self.cycle)
         self.last_epoch = math.floor(epoch)
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
-            param_group['lr'] = lr
+            param_group["lr"] = lr
 
 
 def triplet_margin_with_distance_loss(
@@ -334,7 +406,7 @@ def triplet_margin_with_distance_loss(
         distance_function: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
         margin: float = 1.0,
         swap: bool = False,
-        reduction: str = "mean"
+        reduction: str = "mean",
 ) -> torch.Tensor:
     r"""
     See :class:`~torch.nn.TripletMarginWithDistanceLoss` for details.
@@ -390,7 +462,7 @@ class TripletLoss(nn.Module):
         n = inputs.size(0)
 
         # Compute pairwise distance, replace by the official when merged
-        dist = torch.cdist(inputs, inputs, 2).clamp(min=1e-3)
+        dist = torch.cdist(inputs, inputs, 2)
 
         # For each anchor, find the hardest positive and negative
         mask = targets.expand(n, n).eq(targets.expand(n, n).t())
@@ -403,8 +475,15 @@ class TripletLoss(nn.Module):
 
         # Compute ranking hinge loss
         y = torch.ones_like(dist_an)
-        return self.ranking_loss(dist_an, dist_ap, y)
+        return self.ranking_loss(dist_an, dist_ap, y), dist
         # This is same as " max( D(a,p)-D(a,n) + margin, 0 ) "
+
+
+def get_max(lst):
+    return torch.max(lst).unsqueeze(0)
+
+def get_min(lst):
+    return torch.min(lst).unsqueeze(0)
 
 
 class TripletLossWithGL(nn.Module):
@@ -421,7 +500,6 @@ class TripletLossWithGL(nn.Module):
     def __init__(self, margin=0.3):
         super(TripletLossWithGL, self).__init__()
         self.margin = margin
-        self.ranking_loss = nn.MarginRankingLoss(margin=margin)
 
     def forward(self, inputs, targets):
         """
@@ -432,7 +510,8 @@ class TripletLossWithGL(nn.Module):
         n = inputs.size(0)
 
         # Compute pairwise distance
-        dist = torch.cdist(inputs, inputs, 2).clamp(min=1e-3)
+        # dist = torch.cdist(inputs, inputs, 2).clamp(min=1e-3)
+        dist = torch.cdist(inputs, inputs, 2)
         # for numerical stability
 
         # For each anchor, find the hardest positive and negative
@@ -440,32 +519,37 @@ class TripletLossWithGL(nn.Module):
         mask_gt = torch.mul(targets.expand(n, n).gt(targets.expand(n, n).t()), 2)  # <
         mask_lt = torch.mul(targets.expand(n, n).lt(targets.expand(n, n).t()), 3)  # >
         mask = mask_eq + mask_gt + mask_lt
-        dist_ap, dist_an_g, dist_an_l = [], [], []
-        # dist_anG: anchor negative greater, dist_anL: anchor negative less
+        hard_ap, hard_an_g, hard_an_l = [], [], []
+        # hard_ap: anchor positive, hard_an_g: anchor negative greater, hard_an_l: anchor negative less
 
+        cnt = 0
         for i in range(n):
-            dist_ap.append(dist[i][mask[i] == 1].max().unsqueeze(0))
+            dists_ap = dist[i][mask[i] == 1]
+            dists_an_g = dist[i][mask[i] == 2]
+            dists_an_l = dist[i][mask[i] == 3]
 
-            if len(dist[i][mask[i] == 2]) == 0:
-                dist_an_g.append(torch.tensor([10000], device=dist[i][mask[i] == 2].device))
+            if len(dists_ap) == 1:
+                cnt += 1
+            hard_ap.append(get_max(dists_ap))
+
+            if len(dists_an_g) == 0:
+                hard_an_g.append(torch.tensor([10000], device=dists_an_g.device))
             else:
-                dist_an_g.append(dist[i][mask[i] == 2].min().unsqueeze(0))
+                hard_an_g.append(get_min(dists_an_g))
 
-            if len(dist[i][mask[i] == 3]) == 0:
-                dist_an_l.append(torch.tensor([10000], device=dist[i][mask[i] == 3].device))
+            if len(dists_an_l) == 0:
+                hard_an_l.append(torch.tensor([10000], device=dists_an_l.device))
             else:
-                dist_an_l.append(dist[i][mask[i] == 3].min().unsqueeze(0))
+                hard_an_l.append(get_min(dists_an_l))
 
-        dist_ap = torch.cat(dist_ap)
-        dist_an_g = torch.cat(dist_an_g)
-        dist_an_l = torch.cat(dist_an_l)
+        hard_ap = torch.cat(hard_ap)
+        hard_an_g = torch.cat(hard_an_g)
+        hard_an_l = torch.cat(hard_an_l)
 
-        # Compute ranking hinge loss
-        y = torch.ones_like(dist_an_g)
+        # Compute Triplet loss
         loss = 0
-        loss += self.ranking_loss(abs(dist_an_g - dist_an_l), dist_ap, y)
-        loss += self.ranking_loss(dist_an_g, dist_ap, y)
-        loss += self.ranking_loss(dist_an_l, dist_ap, y)
+        loss += F.relu(hard_ap - abs(hard_an_g - hard_an_l) + self.margin).mean()  # " max( D(a,p) - |D(a,n>)-D(a,n<)| + margin, 0 ) "
+        loss += F.relu(hard_ap - hard_an_g + self.margin).mean()  # " max( D(a,p) - D(a,n>) + margin, 0 ) "
+        loss += F.relu(hard_ap - hard_an_l + self.margin).mean()  # " max( D(a,p) - D(a,n<) + margin, 0 ) "
 
-        return torch.div(loss, 3)
-        # This is same as " max( D(a,p)-|D(a,n>)-D(a,n<)| + margin, 0 ) "
+        return torch.div(loss, 3), dist, cnt

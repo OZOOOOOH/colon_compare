@@ -1,0 +1,8 @@
+_target_: src.datamodules.gastric_datamodule.GastricDataModule
+
+data_dir: ${data_dir} # data_dir is specified in config.yaml
+batch_size: 16
+num_workers: 4
+pin_memory: True
+img_size: 384
+drop_last: False

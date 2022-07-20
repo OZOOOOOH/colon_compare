@@ -19,7 +19,7 @@ from torch import nn
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch.nn.functional as F
-
+from torchmetrics.functional import pairwise_euclidean_distance
 
 def get_logger(name=__name__) -> logging.Logger:
     """Initializes multi-GPU-friendly python command line logger."""
@@ -29,13 +29,13 @@ def get_logger(name=__name__) -> logging.Logger:
     # this ensures all logging levels get marked with the rank zero decorator
     # otherwise logs would get multiplied for each GPU process in multi-GPU setup
     for level in (
-            "debug",
-            "info",
-            "warning",
-            "error",
-            "exception",
-            "fatal",
-            "critical",
+        "debug",
+        "info",
+        "warning",
+        "error",
+        "exception",
+        "fatal",
+        "critical",
     ):
         setattr(logger, level, rank_zero_only(getattr(logger, level)))
 
@@ -66,15 +66,15 @@ def extras(config: DictConfig) -> None:
 
 @rank_zero_only
 def print_config(
-        config: DictConfig,
-        print_order: Sequence[str] = (
-                "datamodule",
-                "model",
-                "callbacks",
-                "logger",
-                "trainer",
-        ),
-        resolve: bool = True,
+    config: DictConfig,
+    print_order: Sequence[str] = (
+        "datamodule",
+        "model",
+        "callbacks",
+        "logger",
+        "trainer",
+    ),
+    resolve: bool = True,
 ) -> None:
     """Prints content of DictConfig using Rich library and its tree structure.
 
@@ -115,12 +115,12 @@ def print_config(
 
 @rank_zero_only
 def log_hyperparameters(
-        config: DictConfig,
-        model: pl.LightningModule,
-        datamodule: pl.LightningDataModule,
-        trainer: pl.Trainer,
-        callbacks: List[pl.Callback],
-        logger: List[pl.loggers.LightningLoggerBase],
+    config: DictConfig,
+    model: pl.LightningModule,
+    datamodule: pl.LightningDataModule,
+    trainer: pl.Trainer,
+    callbacks: List[pl.Callback],
+    logger: List[pl.loggers.LightningLoggerBase],
 ) -> None:  # sourcery skip: merge-dict-assign
     """Controls which config parts are saved by Lightning loggers.
 
@@ -155,12 +155,12 @@ def log_hyperparameters(
 
 
 def finish(
-        config: DictConfig,
-        model: pl.LightningModule,
-        datamodule: pl.LightningDataModule,
-        trainer: pl.Trainer,
-        callbacks: List[pl.Callback],
-        logger: List[pl.loggers.LightningLoggerBase],
+    config: DictConfig,
+    model: pl.LightningModule,
+    datamodule: pl.LightningDataModule,
+    trainer: pl.Trainer,
+    callbacks: List[pl.Callback],
+    logger: List[pl.loggers.LightningLoggerBase],
 ) -> None:
     """Makes sure everything closed properly."""
 
@@ -270,7 +270,7 @@ def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
             flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[:yV])
             indices.append(flatten_[dist_matrix[i][flatten_].argmin()])
         else:
-            flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[yV + 1:])
+            flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[yV + 1 :])
             indices.append(flatten_[dist_matrix[i][flatten_].argmin()])
     return indices
 
@@ -302,6 +302,7 @@ def get_distmat_heatmap(df, targets):
     confmat_heatmap.tick_params(axis="x", which="both", bottom=False)
 
     return confmat_heatmap.get_figure()
+
 
 
 def get_confmat(df):
@@ -386,27 +387,27 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
             else:
                 n = int(math.log((epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult))
                 self.cycle = n
-                self.T_cur = epoch - self.T_0 * (self.T_mult ** n - 1) / (self.T_mult - 1)
+                self.T_cur = epoch - self.T_0 * (self.T_mult**n - 1) / (self.T_mult - 1)
                 self.T_i = self.T_0 * self.T_mult ** (n)
         else:
             self.T_i = self.T_0
             self.T_cur = epoch
 
-        self.eta_max = self.base_eta_max * (self.gamma ** self.cycle)
+        self.eta_max = self.base_eta_max * (self.gamma**self.cycle)
         self.last_epoch = math.floor(epoch)
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group["lr"] = lr
 
 
 def triplet_margin_with_distance_loss(
-        anchor: torch.Tensor,
-        positive: torch.Tensor,
-        negative: torch.Tensor,
-        *,
-        distance_function: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
-        margin: float = 1.0,
-        swap: bool = False,
-        reduction: str = "mean",
+    anchor: torch.Tensor,
+    positive: torch.Tensor,
+    negative: torch.Tensor,
+    *,
+    distance_function: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+    margin: float = 1.0,
+    swap: bool = False,
+    reduction: str = "mean",
 ) -> torch.Tensor:
     r"""
     See :class:`~torch.nn.TripletMarginWithDistanceLoss` for details.
@@ -436,7 +437,6 @@ def triplet_margin_with_distance_loss(
     else:
         return output
 
-
 class TripletLoss(nn.Module):
     """Triplet loss with hard positive/negative mining.
 
@@ -462,7 +462,7 @@ class TripletLoss(nn.Module):
         n = inputs.size(0)
 
         # Compute pairwise distance, replace by the official when merged
-        dist = torch.cdist(inputs, inputs, 2)
+        dist = torch.cdist(inputs, inputs, compute_mode='donot_use_mm_for_euclid_dist')
 
         # For each anchor, find the hardest positive and negative
         mask = targets.expand(n, n).eq(targets.expand(n, n).t())
@@ -478,9 +478,10 @@ class TripletLoss(nn.Module):
         return self.ranking_loss(dist_an, dist_ap, y), dist
         # This is same as " max( D(a,p)-D(a,n) + margin, 0 ) "
 
-
+        
 def get_max(lst):
     return torch.max(lst).unsqueeze(0)
+
 
 def get_min(lst):
     return torch.min(lst).unsqueeze(0)
@@ -509,8 +510,8 @@ class TripletLossWithGL(nn.Module):
         """
         n = inputs.size(0)
 
-        # Make a pairwise distance matrix
-        dist = torch.cdist(inputs, inputs, 2)
+        # Make a pairwise distance matrix        
+        dist = torch.cdist(inputs, inputs, 2,compute_mode='donot_use_mm_for_euclid_dist')
         # Make a relationship mask based on the anchor
         mask_eq = torch.mul(targets.expand(n, n).eq(targets.expand(n, n).t()), 1)  # =
         mask_gt = torch.mul(targets.expand(n, n).gt(targets.expand(n, n).t()), 2)  # <
@@ -547,7 +548,9 @@ class TripletLossWithGL(nn.Module):
         # Compute Triplet loss
         loss = 0
         loss += F.relu(hard_ap - abs(hard_an_g - hard_an_l) + self.margin).mean()  # " max( D(a,p) - |D(a,n>)-D(a,n<)| + margin, 0 ) "
-        loss += F.relu(hard_ap - hard_an_g + self.margin).mean()  # " max( D(a,p) - D(a,n>) + margin, 0 ) "
-        loss += F.relu(hard_ap - hard_an_l + self.margin).mean()  # " max( D(a,p) - D(a,n<) + margin, 0 ) "
+        # loss += F.relu(hard_ap - hard_an_g + self.margin).mean()  # " max( D(a,p) - D(a,n>) + margin, 0 ) "
+        # loss += F.relu(hard_ap - hard_an_l + self.margin).mean()  # " max( D(a,p) - D(a,n<) + margin, 0 ) "
 
-        return torch.div(loss, 3), dist, cnt
+        # return torch.div(loss, 3), dist, cnt
+        return loss, dist, cnt
+

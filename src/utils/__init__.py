@@ -171,7 +171,6 @@ def finish(
 
             wandb.finish()
 
-
 def bring_dataset_csv(datatype, stage=None):
     # Directories
     path = f"/home/compu/jh/data/colon_tma/{datatype}/"
@@ -213,11 +212,11 @@ def vote_results(result_0, result_1, result_2, result_3):
     vote_cnt_3 = 0
     vote_cnt_else = 0
     for i in result_0:
-        if i == 0:
+        if i == 0: # bigger
             vote_cnt_1 += 1
             vote_cnt_2 += 1
             vote_cnt_3 += 1
-        elif i == 1:
+        elif i == 1: # same
             vote_cnt_0 += 1
         else:
             vote_cnt_else += 1
@@ -225,12 +224,12 @@ def vote_results(result_0, result_1, result_2, result_3):
         f"In result_0: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
     )
     for i in result_1:
-        if i == 0:
+        if i == 0: #bigger
             vote_cnt_2 += 1
             vote_cnt_3 += 1
-        elif i == 1:
+        elif i == 1: #same
             vote_cnt_1 += 1
-        elif i == 2:
+        elif i == 2: #smaller
             vote_cnt_0 += 1
     print(
         f"In result_1: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
@@ -439,11 +438,9 @@ def triplet_margin_with_distance_loss(
 
 class TripletLoss(nn.Module):
     """Triplet loss with hard positive/negative mining.
-
     Reference:
     Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
     Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
-
     Args:
     - margin (float): margin for triplet.
     """
@@ -489,11 +486,9 @@ def get_min(lst):
 
 class TripletLossWithGL(nn.Module):
     """Triplet loss with hard positive/negative mining and Greater/Less.
-
     Reference:
     Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
     Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
-
     Args:
     - margin (float): margin for triplet.
     """
@@ -553,4 +548,3 @@ class TripletLossWithGL(nn.Module):
 
         # return torch.div(loss, 3), dist, cnt
         return loss, dist, cnt
-

@@ -3,11 +3,12 @@
 # specify here default evaluation configuration
 defaults:
   - _self_
-  - datamodule: colon.yaml # choose the datamodule for evaluation
-  - model: colon.yaml
+  - datamodule: gastric.yaml # choose the datamodule for evaluation
+  - model: gastric.yaml
+  # - callbacks: null
   - callbacks: wandb.yaml
+  # - logger: null
   - logger: wandb.yaml
-#  - logger: null
   - trainer: default.yaml
   - log_dir: evaluation.yaml
 

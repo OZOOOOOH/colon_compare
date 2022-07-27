@@ -3,10 +3,12 @@
 # specify here default training configuration
 defaults:
   - _self_
-  - datamodule: colon.yaml
-  - model: colon.yaml
+  - datamodule: gastric.yaml
+  - model: gastric.yaml
   - callbacks: wandb.yaml
+#  - callbacks: null
   - logger: wandb.yaml # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+#  - logger: null
   - trainer: default.yaml
   - log_dir: default.yaml
 

@@ -6,10 +6,12 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from src.utils import bring_gastirc_dataset_csv
 from cv2 import cv2
 import random
+import torch
+import glob
 # from torchsampler import ImbalancedDatasetSampler
 
 
-class CustomDataset(Dataset):
+class GastricDataset(Dataset):
     def __init__(self, df, transform=None):
         self.image_id = df["path"].values
         self.labels = df["label"].values
@@ -41,66 +43,8 @@ class GastricDataModule(LightningDataModule):
     ):
         super().__init__()
         self.save_hyperparameters(logger=False)
-        if self.hparams.img_size == 224:
-            resize_value = 256
-        else:
-            resize_value = 456
-
+        resize_value = 256 if self.hparams.img_size == 224 else 456
         # Train augmentation policy
-        # self.train_transform = Compose(
-        #     [
-        #         OneOf([
-        #                 Compose([
-        #                     A.Resize(height=resize_value, width=resize_value),
-        #                     A.RandomCrop(self.hparams.img_size, self.hparams.img_size)
-        #                 ]),
-        #
-        #                 A.CenterCrop(self.hparams.img_size, self.hparams.img_size, p=1),
-        #
-        #                 A.Resize(height=self.hparams.img_size, width=self.hparams.img_size),
-        #             ], p=1),
-        #
-        #         # A.RandomResizedCrop(height=self.hparams.img_size, width=self.hparams.img_size),
-        #
-        #         A.HorizontalFlip(p=0.6),
-        #         # Flip the input horizontally around the y-axis.
-        #         A.VerticalFlip(p=0.6),
-        #         # Flip the input Vertically around the x-axis.
-        #         A.RandomRotate90(p=0.6),
-        #
-        #         # A.ShiftScaleRotate(
-        #         #     shift_limit=0.05,
-        #         #     scale_limit=0.05,
-        #         #     rotate_limit=15,
-        #         #     p=0.5
-        #         # ),
-        #         # Randomly apply affine transforms: translate, scale and rotate the input
-        #
-        #         # A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2, p=0.5),
-        #         # color augmentation
-        #
-        #         # OneOf([
-        #         #
-        #         #     A.GaussNoise(p=0.5),
-        #         #     # A_T.Adv
-        #         #     # A.GaussianBlur(p=0.9),
-        #         #     # A.ColorJitter(),
-        #         #
-        #         # ]),
-        #         # A.Cutout(num_holes=8, max_h_size=8, max_w_size=8, fill_value=0, always_apply=False, p=0.5),
-        #         # A.RandomBrightness(limit=0.15, p=0.5),
-        #         # Randomly change brightness of the input image.
-        #
-        #         # A.Normalize(),
-        #         # Normalization is applied by the formula: img = (img - mean * max_pixel_value) / (std * max_pixel_value)
-        #
-        #         ToTensorV2(),
-        #         # Convert image and mask to torch.Tensor
-        #
-        #     ]
-        # )
-
-        # Validation/Test augmentation policy
         self.train_transform = Compose(
             [
                 A.RandomResizedCrop(height=self.hparams.img_size, width=self.hparams.img_size),
@@ -144,6 +88,7 @@ class GastricDataModule(LightningDataModule):
 
             ]
         )
+        # Validation/Test augmentation policy
         self.test_transform = Compose(
             [
                 A.Resize(height=self.hparams.img_size, width=self.hparams.img_size),
@@ -165,13 +110,13 @@ class GastricDataModule(LightningDataModule):
             # Random train-validation split
             train_df, valid_df = bring_gastirc_dataset_csv(stage=None)
             # Train dataset
-            self.train_dataset = CustomDataset(train_df, self.train_transform)
+            self.train_dataset = GastricDataset(train_df, self.train_transform)
             # Validation dataset
-            self.valid_dataset = CustomDataset(valid_df, self.test_transform)
+            self.valid_dataset = GastricDataset(valid_df, self.test_transform)
             # Test dataset
         else:
             test_df = bring_gastirc_dataset_csv(stage='test')
-            self.test_dataset = CustomDataset(test_df, self.test_transform)
+            self.test_dataset = GastricDataset(test_df, self.test_transform)
 
     def train_dataloader(self):
         return DataLoader(

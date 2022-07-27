@@ -9,7 +9,7 @@ import random
 # from torchsampler import ImbalancedDatasetSampler
 
 
-class CustomDataset(Dataset):
+class ColonDataset(Dataset):
     def __init__(self, df, transform=None):
         self.image_id = df["path"].values
         self.labels = df["class"].values
@@ -33,7 +33,7 @@ class ColonDataModule(LightningDataModule):
             self,
             data_dir: str = "./",
             img_size: int = 256,
-            num_workers: int = 4,
+            num_workers: int = 0,
             batch_size: int = 32,
             pin_memory=False,
             drop_last=True
@@ -41,11 +41,7 @@ class ColonDataModule(LightningDataModule):
     ):
         super().__init__()
         self.save_hyperparameters(logger=False)
-        if self.hparams.img_size == 224:
-            resize_value = 256
-        else:
-            resize_value = 456
-
+        resize_value = 256 if self.hparams.img_size == 224 else 456
         # Train augmentation policy
         # self.train_transform = Compose(
         #     [
@@ -165,13 +161,13 @@ class ColonDataModule(LightningDataModule):
             # Random train-validation split
             train_df, valid_df = bring_dataset_csv(datatype='COLON_MANUAL_512', stage=None)
             # Train dataset
-            self.train_dataset = CustomDataset(train_df, self.train_transform)
+            self.train_dataset = ColonDataset(train_df, self.train_transform)
             # Validation dataset
-            self.valid_dataset = CustomDataset(valid_df, self.test_transform)
+            self.valid_dataset = ColonDataset(valid_df, self.test_transform)
             # Test dataset
         else:
             test_df = bring_dataset_csv(datatype='COLON_MANUAL_512', stage='test')
-            self.test_dataset = CustomDataset(test_df, self.test_transform)
+            self.test_dataset = ColonDataset(test_df, self.test_transform)
 
     def train_dataloader(self):
         return DataLoader(
@@ -191,7 +187,7 @@ class ColonDataModule(LightningDataModule):
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             drop_last=True,
-            shuffle=False
+            shuffle=True
         )
 
     def test_dataloader(self):
@@ -200,5 +196,5 @@ class ColonDataModule(LightningDataModule):
             batch_size=self.hparams.batch_size,
             pin_memory=self.hparams.pin_memory,
             drop_last=self.hparams.drop_last,
-            shuffle=False,
+            shuffle=True,
         )

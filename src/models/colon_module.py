@@ -9,10 +9,7 @@ from torchmetrics import MaxMetric, ConfusionMatrix, F1Score, CohenKappa, SumMet
 import numpy as np
 import pandas as pd
 import wandb
-from src.datamodules.colon_datamodule import CustomDataset
 from src.utils import (
-    vote_results,
-    get_shuffled_label,
     dist_indexing,
     TripletLoss,
     TripletLossWithGL,
@@ -23,9 +20,6 @@ from src.utils import (
 from src.utils.loss import *
 import copy
 from scipy.stats import entropy
-import operator
-import seaborn as sns
-import umap.umap_ as umap
 from pytorch_metric_learning.distances import CosineSimilarity, LpDistance
 from pytorch_metric_learning.losses import TripletMarginLoss, ArcFaceLoss
 from pytorch_metric_learning.miners import TripletMarginMiner

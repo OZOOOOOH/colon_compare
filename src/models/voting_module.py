@@ -1,5 +1,5 @@
+import itertools
 from typing import Any, List
-from click import password_option
 import torch
 import torch.nn as nn
 import timm
@@ -18,12 +18,9 @@ from src.utils import vote_results, get_shuffled_label
 import copy
 from scipy.stats import entropy
 import operator
-from src.utils import (
-    vote_results,
-    get_shuffled_label,
-    get_confmat,
-)
+from src.utils import vote_results, get_shuffled_label, get_confmat, tensor2np
 import wandb
+
 
 class VotingLitModule(LightningModule):
     def __init__(
@@ -35,24 +32,27 @@ class VotingLitModule(LightningModule):
             T_0=15,
             T_mult=2,
             eta_min=1e-6,
-            name='vit_base_patch16_224',
+            name="vit_base_patch16_224",
             pretrained=True,
-            scheduler='ReduceLROnPlateau',
+            scheduler="ReduceLROnPlateau",
             factor=0.5,
             patience=5,
             eps=1e-08,
             loss_weight=0.5,
             threshold=0.8,
             num_sample=10,
-            key='ent',
-            sampling='random',
+            key="ent",
+            sampling="random",
             decide_by_total_probs=False,
-            weighted_sum=False
+            weighted_sum=False,
+            module_type="voting",
     ):
         super().__init__()
         self.save_hyperparameters(logger=False)
 
-        self.model = timm.create_model(self.hparams.name, pretrained=self.hparams.pretrained, num_classes=4)
+        self.model = timm.create_model(
+            self.hparams.name, pretrained=self.hparams.pretrained, num_classes=4
+        )
         self.discriminator_layer1 = nn.Sequential(
             nn.Linear(self.model.head.in_features, 512),
             nn.LeakyReLU(0.2, inplace=True),
@@ -78,13 +78,16 @@ class VotingLitModule(LightningModule):
         self.f1_score = F1Score(num_classes=4, average="macro")
         self.cohen_kappa = CohenKappa(num_classes=4, weights="quadratic")
         # self.cnt = SumMetric()
-    def forward(self, x):  # 4 classification
-        return self.discriminator_layer1(self.model.forward_head(self.model.forward_features(x.float()), pre_logits=True))
 
-    def get_features(self,x):
+    def forward(self, x):  # 4 classification
+        return self.discriminator_layer1(
+            self.model.forward_head(self.model.forward_features(x.float()), pre_logits=True)
+        )
+
+    def get_features(self, x):
         # get features from model
         features = self.model.forward_features(x.float())
-        features = self.model.forward_head(features,pre_logits=True)
+        features = self.model.forward_head(features, pre_logits=True)
         return features
 
     def get_comparison_list(self, origin, shuffle):
@@ -126,252 +129,210 @@ class VotingLitModule(LightningModule):
         return convinced
 
     def check_which_dataset(self):
-        dataset_name=str(self.trainer.datamodule.__class__)
-        if 'ubc' in dataset_name:
-            return 'ubc'
-        elif 'harvard' in dataset_name:
-            return 'harvard'
-        elif 'colon' in dataset_name:
-            return 'colon'
-        elif 'gastric' in dataset_name:
-            return 'gastric'        
+        dataset_name = str(self.trainer.datamodule.__class__).lower()
+        if "ubc" in dataset_name:
+            return "ubc"
+        elif "harvard" in dataset_name:
+            return "harvard"
+        elif "colon" in dataset_name:
+            return "colon"
+        elif "gastric" in dataset_name:
+            return "gastric"
         else:
-            raise ValueError('Dataset name is not correct')
-    
+            raise ValueError("Dataset name is not correct")
+
     def get_trained_dataset(self):
         data_type = self.check_which_dataset()
-        if data_type in ['colon', 'gastric']:
+        if data_type in ["colon", "gastric"]:
             paths = self.trainer.datamodule.train_dataloader().dataset.image_id
             labels = self.trainer.datamodule.train_dataloader().dataset.labels
-        elif data_type in ['harvard', 'ubc']:
-            paths = np.array([path for path,label in self.trainer.datamodule.train_dataloader().dataset.pair_list])
-            labels = np.array([label for path,label in self.trainer.datamodule.train_dataloader().dataset.pair_list])
+        elif data_type in ["harvard", "ubc"]:
+            paths = np.array(
+                [
+                    path
+                    for path, label in self.trainer.datamodule.train_dataloader().dataset.pair_list
+                ]
+            )
+            labels = np.array(
+                [
+                    label
+                    for path, label in self.trainer.datamodule.train_dataloader().dataset.pair_list
+                ]
+            )
 
-        return paths,labels, data_type
-    def get_dataclass(self,data_type):
-        if data_type =='colon':
+        return paths, labels, data_type
+
+    def get_dataclass(self, data_type):
+        if data_type == "colon":
             return ColonDataset
-        elif data_type=='gastric':
+        elif data_type == "gastric":
             return GastricDataset
-        elif data_type =='harvard':
+        elif data_type == "harvard":
             return HarvardDataset_pd
-        elif data_type =='ubc':
+        elif data_type == "ubc":
             return UbcDataset_pd
-        
+
+    def bring_trained_feature(self, mode):
+        path = '/home/compu/jh/data/voting/'
+        name = f'{self.trainer.datamodule.__class__.__name__.lower()[:-10]}_{self.hparams.name}.npy'
+        features = np.load(f'{path}/features/{name}')
+        preds = np.load(f'{path}/preds/{name}')
+
+        if mode == 'random':
+            random_idxs = [np.random.choice(np.where(preds == i)[0], self.hparams.num_sample, replace=False) for i in
+                           range(4)]
+        elif mode == 'trust':
+            max_probs = np.load(f'{path}/max_probs/{name}')
+            random_idxs = [
+                np.random.choice(np.where(np.logical_and(preds == i, max_probs > 0.9))[0], self.hparams.num_sample,
+                                 replace=False) for i in range(4)]
+
+        return [features[random_idxs[i]] for i in range(4)]
+
     def bring_random_trained_data(self, x):
         self.trainer.datamodule.setup()
-        train_img_path,train_img_labels,data_type = self.get_trained_dataset()
-        CustomDataset=self.get_dataclass(data_type)
-        
-        random_idx_label0 = np.random.choice(np.where(train_img_labels == 0)[0], self.hparams.num_sample, replace=False)
-        random_idx_label1 = np.random.choice(np.where(train_img_labels == 1)[0], self.hparams.num_sample, replace=False)
-        random_idx_label2 = np.random.choice(np.where(train_img_labels == 2)[0], self.hparams.num_sample, replace=False)
-        random_idx_label3 = np.random.choice(np.where(train_img_labels == 3)[0], self.hparams.num_sample, replace=False)
+        train_img_path, train_img_labels, data_type = self.get_trained_dataset()
+        CustomDataset = self.get_dataclass(data_type)
+        random_idx_labels = [
+            np.random.choice(
+                np.where(train_img_labels == i)[0], self.hparams.num_sample, replace=False
+            )
+            for i in range(4)
+        ]
+        random_10_train_paths = [train_img_path[random_idx_labels[i]] for i in range(4)]
+        random_10_train_labels = [train_img_labels[random_idx_labels[i]] for i in range(4)]
 
-        random_10_train_path0 = train_img_path[random_idx_label0]
-        random_10_train_path1 = train_img_path[random_idx_label1]
-        random_10_train_path2 = train_img_path[random_idx_label2]
-        random_10_train_path3 = train_img_path[random_idx_label3]
+        df = [
+            pd.DataFrame(
+                {
+                    "path": random_10_train_paths[i],
+                    "label": random_10_train_labels[i],
+                    "class": random_10_train_labels[i],
+                }
+            )
+            for i in range(4)
+        ]
 
-        random_10_train_label0 = train_img_labels[random_idx_label0]
-        random_10_train_label1 = train_img_labels[random_idx_label1]
-        random_10_train_label2 = train_img_labels[random_idx_label2]
-        random_10_train_label3 = train_img_labels[random_idx_label3]
+        dataloaders = [
+            DataLoader(
+                CustomDataset(df[i], self.trainer.datamodule.train_transform),
+                batch_size=10,
+                num_workers=0,
+                pin_memory=False,
+                drop_last=False,
+                shuffle=False,
+            )
+            for i in range(4)
+        ]
 
-        df_0 = pd.DataFrame({'path': random_10_train_path0,
-                             'label': random_10_train_label0
-                             })
-        df_1 = pd.DataFrame({'path': random_10_train_path1,
-                             'label': random_10_train_label1
-                             })
-        df_2 = pd.DataFrame({'path': random_10_train_path2,
-                             'label': random_10_train_label2
-                             })
-        df_3 = pd.DataFrame({'path': random_10_train_path3,
-                             'label': random_10_train_label3
-                             })
-        dataloader_0 = DataLoader(
-            CustomDataset(df_0, self.trainer.datamodule.train_transform),
-            batch_size=10,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=False,
-        )
-        dataloader_1 = DataLoader(
-            CustomDataset(df_1, self.trainer.datamodule.train_transform),
-            batch_size=10,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=False,
-        )
-        dataloader_2 = DataLoader(
-            CustomDataset(df_2, self.trainer.datamodule.train_transform),
-            batch_size=10,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=False,
-        )
-        dataloader_3 = DataLoader(
-            CustomDataset(df_3, self.trainer.datamodule.train_transform),
-            batch_size=10,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=False,
-        )
-        imgs_0, labels_0 = next(iter(dataloader_0))
-        imgs_1, labels_1 = next(iter(dataloader_1))
-        imgs_2, labels_2 = next(iter(dataloader_2))
-        imgs_3, labels_3 = next(iter(dataloader_3))
+        imgs = []
+        for i in range(4):
+            img, _ = next(iter(dataloaders[i]))
+            img = img.type_as(x)
+            imgs.append(img)
         # bring data from train loader and convert to tensor
-        imgs_0 = imgs_0.type_as(x)
-        imgs_1 = imgs_1.type_as(x)
-        imgs_2 = imgs_2.type_as(x)
-        imgs_3 = imgs_3.type_as(x)
 
-        return imgs_0, imgs_1, imgs_2, imgs_3
+        return imgs
 
     def bring_convinced_trained_data(self, x):
         # bring convinced data
         self.trainer.datamodule.setup()
-        train_img_path,train_img_labels,data_type = self.get_trained_dataset()
-        CustomDataset=self.get_dataclass(data_type)
+        train_img_path, train_img_labels, data_type = self.get_trained_dataset()
+        CustomDataset = self.get_dataclass(data_type)
 
-        idx_label0 = np.where(train_img_labels == 0)[0]
-        idx_label1 = np.where(train_img_labels == 1)[0]
-        idx_label2 = np.where(train_img_labels == 2)[0]
-        idx_label3 = np.where(train_img_labels == 3)[0]
+        idx_labels = [np.where(train_img_labels == i)[0] for i in range(4)]
+        train_paths = [train_img_path[idx_labels[i]] for i in range(4)]
+        train_labels = [train_img_labels[idx_labels[i]] for i in range(4)]
+        df = [
+            pd.DataFrame(
+                {"path": train_paths[i], "label": train_labels[i], "class": train_labels[i]}
+            )
+            for i in range(4)
+        ]
+        dataloaders = [
+            DataLoader(
+                CustomDataset(df[i], self.trainer.datamodule.train_transform),
+                batch_size=16,
+                num_workers=0,
+                pin_memory=False,
+                drop_last=False,
+                shuffle=True,
+            )
+            for i in range(4)
+        ]
 
-        train_path0 = train_img_path[idx_label0]
-        train_path1 = train_img_path[idx_label1]
-        train_path2 = train_img_path[idx_label2]
-        train_path3 = train_img_path[idx_label3]
+        return [self.get_convinced(x, dataloaders[i]) for i in range(4)]
 
-        train_label0 = train_img_labels[idx_label0]
-        train_label1 = train_img_labels[idx_label1]
-        train_label2 = train_img_labels[idx_label2]
-        train_label3 = train_img_labels[idx_label3]
-
-        df_0 = pd.DataFrame({'path': train_path0,
-                             'label': train_label0
-                             })
-        df_1 = pd.DataFrame({'path': train_path1,
-                             'label': train_label1
-                             })
-        df_2 = pd.DataFrame({'path': train_path2,
-                             'label': train_label2
-                             })
-        df_3 = pd.DataFrame({'path': train_path3,
-                             'label': train_label3
-                             })
-
-        dataloader_0 = DataLoader(
-            CustomDataset(df_0, self.trainer.datamodule.train_transform),
-            batch_size=16,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=True,
-        )
-        dataloader_1 = DataLoader(
-            CustomDataset(df_1, self.trainer.datamodule.train_transform),
-            batch_size=16,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=True,
-        )
-        dataloader_2 = DataLoader(
-            CustomDataset(df_2, self.trainer.datamodule.train_transform),
-            batch_size=16,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=True,
-        )
-        dataloader_3 = DataLoader(
-            CustomDataset(df_3, self.trainer.datamodule.train_transform),
-            batch_size=16,
-            num_workers=0,
-            pin_memory=False,
-            drop_last=False,
-            shuffle=True,
-        )
-        return self.get_convinced(x, dataloader_0), self.get_convinced(x, dataloader_1), \
-               self.get_convinced(x, dataloader_2), self.get_convinced(x, dataloader_3)
-
-    def compare_test_with_trained(self, idx, features, imgs):
+    def compare_test_with_trained(self, idx, features, trained_features):
         # compare trained and test labels
         result_list = []
-        for img in imgs:
-            trained_features = self.get_features(img.unsqueeze(0).float())
-            concat_test_with_trained_features = torch.cat((features[idx].unsqueeze(0), trained_features), dim=1)
+        for trained_feature in trained_features:
+            concat_test_with_trained_features = torch.cat(
+                (features[idx].unsqueeze(0), torch.from_numpy(trained_feature).type_as(features[idx]).unsqueeze(0)),
+                dim=1
+            )
             logits_compare = self.discriminator_layer2(concat_test_with_trained_features)
             preds_compare = torch.argmax(logits_compare, dim=1)
             result_list.append(preds_compare)
-        return result_list
+        return torch.cat(result_list)
 
-    def predict_using_voting(self, entopy_4cls, max_probs_4cls, features, total_imgs, probs_4cls, preds_4cls, y):
-        # sourcery no-metrics
-
-        imgs_0, imgs_1, imgs_2, imgs_3 = total_imgs
-        #trained data
-        
+    def predict_using_voting(
+            self, entropy_4cls, max_probs_4cls, features, total_trained_features, probs_4cls, preds_4cls, y
+    ):
         cnt_correct_diff = 0
-        ops = {'ent': operator.gt, 'prob': operator.lt}
+        ops = {"ent": operator.gt, "prob": operator.lt}
         # gt: > , lt: <
-        threshold_key = entopy_4cls if self.hparams.key == 'ent' else max_probs_4cls.values
-        #get key data by key
+        threshold_key = entropy_4cls if self.hparams.key == "ent" else max_probs_4cls.values
+        # get key data by key
         for idx, value in enumerate(threshold_key):
             if ops[self.hparams.key](value, self.hparams.threshold):
                 # if key=='ent' --> value > threshold
                 # if key=='prob' --> value < threshold
-                
-                result_0 = torch.cat(self.compare_test_with_trained(idx, features, imgs_0), dim=0)
-                result_1 = torch.cat(self.compare_test_with_trained(idx, features, imgs_1), dim=0)
-                result_2 = torch.cat(self.compare_test_with_trained(idx, features, imgs_2), dim=0)
-                result_3 = torch.cat(self.compare_test_with_trained(idx, features, imgs_3), dim=0)
+                results = [
+                    self.compare_test_with_trained(idx, features, total_trained_features[i])
+                    for i in range(4)
+                ]
                 # compare train imgs with test imgs // batch size
-                vote_cnt = vote_results(result_0, result_1, result_2, result_3)
-                total_score = sum(vote_cnt)
-                prob_vote = np.array([i / total_score for i in vote_cnt])
+                vote_score = vote_results(results)  # vote_score
 
-                add_probs_4cls_vote = (probs_4cls[idx].detach().cpu().numpy() + prob_vote) / 2
-                # divide 2 (1+1)
-                vote_cls = np.argmax(add_probs_4cls_vote) if self.hparams.decide_by_total_probs else np.argmax(vote_cnt)
+                if self.hparams.weighted_sum:
+                    total_score = sum(vote_score)
+                    prob_vote = np.array(
+                        [i / total_score for i in vote_score]
+                    )  # make vote_socre to probability
+                    vote_cls = self.get_vote_cls_by_weighted_sum(entropy_4cls, probs_4cls, idx, prob_vote)
+                elif self.hparams.decide_by_total_probs:
+                    total_score = sum(vote_score)
+                    prob_vote = np.array(
+                        [i / total_score for i in vote_score]
+                    )  # make vote_socre to probability
 
-                e_4cls, e_vote = (
-                    entropy(probs_4cls[idx].detach().cpu().numpy()),
-                    entropy(prob_vote)) if self.hparams.weighted_sum else (
-                    None, None)
+                    vote_cls = self.get_vote_cls_by_total_probs(probs_4cls, idx, prob_vote)
+                else:
+                    vote_cls = np.argmax(vote_score)
 
-                if e_4cls is not None and e_4cls > e_vote:
-                    w_4cls_prob = np.exp(-e_4cls) / (np.exp(-e_4cls) + np.exp(-e_vote))
-                    w_vot_prob = np.exp(-e_vote) / (np.exp(-e_4cls) + np.exp(-e_vote))
-
-                    voting_classify = probs_4cls[idx].detach().cpu().numpy() * w_4cls_prob + prob_vote * w_vot_prob
-                    vote_cls = np.argmax(voting_classify)
-
-                # class based on voting
-                if preds_4cls[idx].detach().cpu().item() != vote_cls:
-                    if vote_cls == y[idx]:
-                        cnt_correct_diff += 1
-                    print()
-                    print(f'True label: {y[idx]}')
-                    print(f'Predict label: {preds_4cls[idx]}')
-                    print(f'vote_cnt_0:{vote_cnt[0]}')
-                    print(f'vote_cnt_1:{vote_cnt[1]}')
-                    print(f'vote_cnt_2:{vote_cnt[2]}')
-                    print(f'vote_cnt_3:{vote_cnt[3]}')
-                    print(f'vote_cls:{vote_cls}')
-                    print()
+                if tensor2np(preds_4cls)[idx] != vote_cls and vote_cls == y[idx]:
+                    cnt_correct_diff += 1
+                # This is for the counting that the vote_label is the same as the true label, but differnt as predict label
                 preds_4cls[idx] = torch.Tensor([vote_cls]).type_as(y)
         return cnt_correct_diff, preds_4cls
 
-    def step_voting(self,batch):
+    def get_vote_cls_by_total_probs(self, probs_4cls, idx, prob_vote):
+        # add probability of vote and original probs_4cls
+        # divide 2 (1+1)
+        add_probs_4cls_vote = (tensor2np(probs_4cls[idx]) + prob_vote) / 2
+        return np.argmax(add_probs_4cls_vote)
+
+    def get_vote_cls_by_weighted_sum(self, entropy_4cls, probs_4cls, idx, prob_vote, vote_cnt):
+        e_4cls, e_vote = entropy_4cls[idx], entropy(prob_vote)
+        if e_4cls <= e_vote:
+            return np.argmax(vote_cnt)
+        w_4cls = np.exp(-e_4cls) / (np.exp(-e_4cls) + np.exp(-e_vote))
+        w_vote = np.exp(-e_vote) / (np.exp(-e_4cls) + np.exp(-e_vote))
+        voting_classify = tensor2np(probs_4cls[idx]) * w_4cls + prob_vote * w_vote
+        return np.argmax(voting_classify)
+
+    def step_voting(self, batch):
         x, y = batch
         features = self.get_features(x)
         logits_4cls = self.discriminator_layer1(features)
@@ -380,13 +341,17 @@ class VotingLitModule(LightningModule):
         probs_4cls = torch.softmax(logits_4cls, dim=1)
         max_probs_4cls = torch.max(probs_4cls, 1)
         origin_preds_4cls = copy.deepcopy(preds_4cls)
-        entropy_4cls = list(map(lambda i: entropy(i), probs_4cls.detach().cpu().numpy()))
-        imgs_0, imgs_1, imgs_2, imgs_3 = self.bring_random_trained_data(
-            x) if self.hparams.sampling == 'random' else self.bring_convinced_trained_data(x)
+        entropy_4cls = list(map(lambda i: entropy(i), tensor2np(probs_4cls)))
 
-        total_imgs = [imgs_0, imgs_1, imgs_2, imgs_3]
-        cnt_correct_diff, new_preds_4cls = self.predict_using_voting(entropy_4cls, max_probs_4cls, features, total_imgs,
-                                                                     probs_4cls, preds_4cls, y)
+        # total_trained_imgs = (
+        #     self.bring_random_trained_data(x)
+        #     if self.hparams.sampling == "random"
+        #     else self.bring_convinced_trained_data(x)
+        # )
+        trained_features = self.bring_trained_feature(mode=self.hparams.sampling)
+        cnt_correct_diff, new_preds_4cls = self.predict_using_voting(
+            entropy_4cls, max_probs_4cls, features, trained_features, probs_4cls, preds_4cls, y
+        )
         cnt_diff = sum(x != y for x, y in zip(origin_preds_4cls, new_preds_4cls))
         # print(f'length of preds : {len(origin_preds_4cls)} // The number of changed : {cnt_diff}')
 
@@ -400,10 +365,17 @@ class VotingLitModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         pass
-    
+
     def test_step(self, batch, batch_idx):
 
-        loss, origin_preds_4cls, new_preds_4cls, target_4cls, cnt_diff, cnt_correct_diff=self.step_voting(batch)
+        (
+            loss,
+            origin_preds_4cls,
+            new_preds_4cls,
+            target_4cls,
+            cnt_diff,
+            cnt_correct_diff,
+        ) = self.step_voting(batch)
         self.confusion_matrix(new_preds_4cls, target_4cls)
         self.f1_score(new_preds_4cls, target_4cls)
         self.cohen_kappa(new_preds_4cls, target_4cls)
@@ -413,9 +385,16 @@ class VotingLitModule(LightningModule):
         self.log("test/loss", loss, on_step=False, on_epoch=True)
         self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
         self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
-        return {"loss": loss, "origin_acc": origin_acc, "new_acc": new_acc, "origin_preds": origin_preds_4cls,
-                "new_preds_4cls": new_preds_4cls, "targets": target_4cls, "cnt_diff": cnt_diff,
-                "cnt_correct_diff": cnt_correct_diff}
+        return {
+            "loss": loss,
+            "origin_acc": origin_acc,
+            "new_acc": new_acc,
+            "origin_preds": origin_preds_4cls,
+            "new_preds_4cls": new_preds_4cls,
+            "targets": target_4cls,
+            "cnt_diff": cnt_diff,
+            "cnt_correct_diff": cnt_correct_diff,
+        }
 
     def test_epoch_end(self, outputs):
 
@@ -428,13 +407,14 @@ class VotingLitModule(LightningModule):
         self.log("test/f1_macro", f1, on_step=False, on_epoch=True)
         self.log("test/wqKappa", qwk, on_step=False, on_epoch=True)
 
-        cnt_diff = sum(i['cnt_diff'] for i in outputs)
-        cnt_correct_diff = sum(i['cnt_correct_diff'] for i in outputs)
+        cnt_diff = sum(i["cnt_diff"] for i in outputs)
+        cnt_correct_diff = sum(i["cnt_correct_diff"] for i in outputs)
         cnt_diff = cnt_diff.sum()
-        self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx='sum')
-        self.log("test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx='sum')
+        self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx="sum")
+        self.log(
+            "test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx="sum"
+        )
         self.test_acc.reset()
         self.confusion_matrix.reset()
         self.f1_score.reset()
         self.cohen_kappa.reset()
-        

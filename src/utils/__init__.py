@@ -21,6 +21,7 @@ import seaborn as sns
 import torch.nn.functional as F
 from torchmetrics.functional import pairwise_euclidean_distance
 
+
 def get_logger(name=__name__) -> logging.Logger:
     """Initializes multi-GPU-friendly python command line logger."""
 
@@ -29,13 +30,13 @@ def get_logger(name=__name__) -> logging.Logger:
     # this ensures all logging levels get marked with the rank zero decorator
     # otherwise logs would get multiplied for each GPU process in multi-GPU setup
     for level in (
-        "debug",
-        "info",
-        "warning",
-        "error",
-        "exception",
-        "fatal",
-        "critical",
+            "debug",
+            "info",
+            "warning",
+            "error",
+            "exception",
+            "fatal",
+            "critical",
     ):
         setattr(logger, level, rank_zero_only(getattr(logger, level)))
 
@@ -66,15 +67,15 @@ def extras(config: DictConfig) -> None:
 
 @rank_zero_only
 def print_config(
-    config: DictConfig,
-    print_order: Sequence[str] = (
-        "datamodule",
-        "model",
-        "callbacks",
-        "logger",
-        "trainer",
-    ),
-    resolve: bool = True,
+        config: DictConfig,
+        print_order: Sequence[str] = (
+                "datamodule",
+                "model",
+                "callbacks",
+                "logger",
+                "trainer",
+        ),
+        resolve: bool = True,
 ) -> None:
     """Prints content of DictConfig using Rich library and its tree structure.
 
@@ -115,12 +116,12 @@ def print_config(
 
 @rank_zero_only
 def log_hyperparameters(
-    config: DictConfig,
-    model: pl.LightningModule,
-    datamodule: pl.LightningDataModule,
-    trainer: pl.Trainer,
-    callbacks: List[pl.Callback],
-    logger: List[pl.loggers.LightningLoggerBase],
+        config: DictConfig,
+        model: pl.LightningModule,
+        datamodule: pl.LightningDataModule,
+        trainer: pl.Trainer,
+        callbacks: List[pl.Callback],
+        logger: List[pl.loggers.LightningLoggerBase],
 ) -> None:  # sourcery skip: merge-dict-assign
     """Controls which config parts are saved by Lightning loggers.
 
@@ -155,12 +156,12 @@ def log_hyperparameters(
 
 
 def finish(
-    config: DictConfig,
-    model: pl.LightningModule,
-    datamodule: pl.LightningDataModule,
-    trainer: pl.Trainer,
-    callbacks: List[pl.Callback],
-    logger: List[pl.loggers.LightningLoggerBase],
+        config: DictConfig,
+        model: pl.LightningModule,
+        datamodule: pl.LightningDataModule,
+        trainer: pl.Trainer,
+        callbacks: List[pl.Callback],
+        logger: List[pl.loggers.LightningLoggerBase],
 ) -> None:
     """Makes sure everything closed properly."""
 
@@ -171,6 +172,7 @@ def finish(
 
             wandb.finish()
 
+
 def bring_dataset_csv(datatype, stage=None):
     # Directories
     path = f"/home/compu/jh/data/colon_tma/{datatype}/"
@@ -179,6 +181,17 @@ def bring_dataset_csv(datatype, stage=None):
         return pd.read_csv(path + "test.csv")
     df_train = pd.read_csv(path + "train.csv")
     df_val = pd.read_csv(path + "valid.csv")
+    return df_train, df_val
+
+
+def bring_dataset_colontest2_csv(stage=None):
+    # Directories
+    path = '/home/compu/jh/data/colon_45WSIs_1144_08_step05_05/'
+
+    if stage != "fit" and stage is not None:
+        return pd.read_csv(f"{path}test.csv")
+    df_train = pd.read_csv(f"{path}train.csv")
+    df_val = pd.read_csv(f"{path}valid.csv")
     return df_train, df_val
 
 
@@ -193,6 +206,10 @@ def bring_gastirc_dataset_csv(stage=None):
     return df_train, df_val
 
 
+def tensor2np(data: torch.Tensor):
+    return data.detach().cpu().numpy()
+
+
 def get_shuffled_label(x, y):
     pair = list(enumerate(list(pair) for pair in zip(x, y)))
     pair = random.sample(pair, len(pair))
@@ -205,59 +222,28 @@ def get_shuffled_label(x, y):
     return indices, shuffle_y
 
 
-def vote_results(result_0, result_1, result_2, result_3):
-    vote_cnt_0 = 0
-    vote_cnt_1 = 0
-    vote_cnt_2 = 0
-    vote_cnt_3 = 0
-    vote_cnt_else = 0
-    for i in result_0:
-        if i == 0: # bigger
-            vote_cnt_1 += 1
-            vote_cnt_2 += 1
-            vote_cnt_3 += 1
-        elif i == 1: # same
-            vote_cnt_0 += 1
-        else:
-            vote_cnt_else += 1
-    print(
-        f"In result_0: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    for i in result_1:
-        if i == 0: #bigger
-            vote_cnt_2 += 1
-            vote_cnt_3 += 1
-        elif i == 1: #same
-            vote_cnt_1 += 1
-        elif i == 2: #smaller
-            vote_cnt_0 += 1
-    print(
-        f"In result_1: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    for i in result_2:
-        if i == 0:
-            vote_cnt_3 += 1
-        elif i == 1:
-            vote_cnt_2 += 1
-        elif i == 2:
-            vote_cnt_0 += 1
-            vote_cnt_1 += 1
-    print(
-        f"In result_2: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    for i in result_3:
-        if i == 0:
-            vote_cnt_else += 1
-        elif i == 1:
-            vote_cnt_3 += 1
-        elif i == 2:
-            vote_cnt_0 += 1
-            vote_cnt_1 += 1
-            vote_cnt_2 += 1
-    print(
-        f"In result_3: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    return [vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3]
+def calculate_score(n, r, class_score):
+    if r == 0:  # bigger
+        for idx in range(n + 1, 4):
+            class_score[idx] += 1
+    elif r == 1:  # same
+        class_score[n] += 1
+    else:  # smaller
+        for idx in range(n):
+            class_score[idx] += 1
+    return class_score
+
+
+def vote_results(results: List):
+    class_score = [0] * 4
+    # class_score[4] is other case
+    for r0, r1, r2, r3 in zip(results[0], results[1], results[2], results[3]):
+        class_score = calculate_score(0, r0, class_score)
+        class_score = calculate_score(1, r1, class_score)
+        class_score = calculate_score(2, r2, class_score)
+        class_score = calculate_score(3, r3, class_score)
+
+    return class_score
 
 
 def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
@@ -269,7 +255,7 @@ def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
             flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[:yV])
             indices.append(flatten_[dist_matrix[i][flatten_].argmin()])
         else:
-            flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[yV + 1 :])
+            flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[yV + 1:])
             indices.append(flatten_[dist_matrix[i][flatten_].argmin()])
     return indices
 
@@ -301,7 +287,6 @@ def get_distmat_heatmap(df, targets):
     confmat_heatmap.tick_params(axis="x", which="both", bottom=False)
 
     return confmat_heatmap.get_figure()
-
 
 
 def get_confmat(df):
@@ -386,27 +371,27 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
             else:
                 n = int(math.log((epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult))
                 self.cycle = n
-                self.T_cur = epoch - self.T_0 * (self.T_mult**n - 1) / (self.T_mult - 1)
+                self.T_cur = epoch - self.T_0 * (self.T_mult ** n - 1) / (self.T_mult - 1)
                 self.T_i = self.T_0 * self.T_mult ** (n)
         else:
             self.T_i = self.T_0
             self.T_cur = epoch
 
-        self.eta_max = self.base_eta_max * (self.gamma**self.cycle)
+        self.eta_max = self.base_eta_max * (self.gamma ** self.cycle)
         self.last_epoch = math.floor(epoch)
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group["lr"] = lr
 
 
 def triplet_margin_with_distance_loss(
-    anchor: torch.Tensor,
-    positive: torch.Tensor,
-    negative: torch.Tensor,
-    *,
-    distance_function: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
-    margin: float = 1.0,
-    swap: bool = False,
-    reduction: str = "mean",
+        anchor: torch.Tensor,
+        positive: torch.Tensor,
+        negative: torch.Tensor,
+        *,
+        distance_function: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        margin: float = 1.0,
+        swap: bool = False,
+        reduction: str = "mean",
 ) -> torch.Tensor:
     r"""
     See :class:`~torch.nn.TripletMarginWithDistanceLoss` for details.
@@ -435,6 +420,7 @@ def triplet_margin_with_distance_loss(
         return output.sum()
     else:
         return output
+
 
 class TripletLoss(nn.Module):
     """Triplet loss with hard positive/negative mining.
@@ -475,7 +461,7 @@ class TripletLoss(nn.Module):
         return self.ranking_loss(dist_an, dist_ap, y), dist
         # This is same as " max( D(a,p)-D(a,n) + margin, 0 ) "
 
-        
+
 def get_max(lst):
     return torch.max(lst).unsqueeze(0)
 
@@ -506,7 +492,7 @@ class TripletLossWithGL(nn.Module):
         n = inputs.size(0)
 
         # Make a pairwise distance matrix        
-        dist = torch.cdist(inputs, inputs, 2,compute_mode='donot_use_mm_for_euclid_dist')
+        dist = torch.cdist(inputs, inputs, 2, compute_mode='donot_use_mm_for_euclid_dist')
         # Make a relationship mask based on the anchor
         mask_eq = torch.mul(targets.expand(n, n).eq(targets.expand(n, n).t()), 1)  # =
         mask_gt = torch.mul(targets.expand(n, n).gt(targets.expand(n, n).t()), 2)  # <
@@ -542,7 +528,8 @@ class TripletLossWithGL(nn.Module):
 
         # Compute Triplet loss
         loss = 0
-        loss += F.relu(hard_ap - abs(hard_an_g - hard_an_l) + self.margin).mean()  # " max( D(a,p) - |D(a,n>)-D(a,n<)| + margin, 0 ) "
+        loss += F.relu(hard_ap - abs(
+            hard_an_g - hard_an_l) + self.margin).mean()  # " max( D(a,p) - |D(a,n>)-D(a,n<)| + margin, 0 ) "
         # loss += F.relu(hard_ap - hard_an_g + self.margin).mean()  # " max( D(a,p) - D(a,n>) + margin, 0 ) "
         # loss += F.relu(hard_ap - hard_an_l + self.margin).mean()  # " max( D(a,p) - D(a,n<) + margin, 0 ) "
 

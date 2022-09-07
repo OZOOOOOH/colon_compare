@@ -20,6 +20,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import torch.nn.functional as F
 from torchmetrics.functional import pairwise_euclidean_distance
+import time
+from pykeops.torch import LazyTensor
+import numpy as np
+
 
 def get_logger(name=__name__) -> logging.Logger:
     """Initializes multi-GPU-friendly python command line logger."""
@@ -183,6 +187,17 @@ def bring_dataset_csv(datatype, stage=None):
     return df_train, df_val
 
 
+def bring_dataset_colontest2_csv(stage=None):
+    # Directories
+    path = "/home/compu/jh/data/colon_45WSIs_1144_08_step05_05/"
+
+    if stage != "fit" and stage is not None:
+        return pd.read_csv(f"{path}test.csv")
+    df_train = pd.read_csv(f"{path}train.csv")
+    df_val = pd.read_csv(f"{path}valid.csv")
+    return df_train, df_val
+
+
 def bring_gastirc_dataset_csv(stage=None):
     # Directories
     path = "/home/compu/jh/data/gastric/"
@@ -194,7 +209,18 @@ def bring_gastirc_dataset_csv(stage=None):
     return df_train, df_val
 
 
+def tensor2np(data: torch.Tensor):
+    """convert tensor to numpy array"""
+    return data if isinstance(data, np.ndarray) else data.detach().cpu().numpy()
+
+
 def get_shuffled_label(x, y):
+    """get shuffled label from x and y
+
+    1) shuffle the pair (x,y)
+    2) get the shuffled index and targets
+
+    """
     pair = list(enumerate(list(pair) for pair in zip(x, y)))
     pair = random.sample(pair, len(pair))
     indices, pair = zip(*pair)
@@ -206,59 +232,51 @@ def get_shuffled_label(x, y):
     return indices, shuffle_y
 
 
-def vote_results(result_0, result_1, result_2, result_3):
-    vote_cnt_0 = 0
-    vote_cnt_1 = 0
-    vote_cnt_2 = 0
-    vote_cnt_3 = 0
-    vote_cnt_else = 0
-    for i in result_0:
-        if i == 0:
-            vote_cnt_1 += 1
-            vote_cnt_2 += 1
-            vote_cnt_3 += 1
-        elif i == 1:
-            vote_cnt_0 += 1
-        else:
-            vote_cnt_else += 1
-    print(
-        f"In result_0: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    for i in result_1:
-        if i == 0:
-            vote_cnt_2 += 1
-            vote_cnt_3 += 1
-        elif i == 1:
-            vote_cnt_1 += 1
-        elif i == 2:
-            vote_cnt_0 += 1
-    print(
-        f"In result_1: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    for i in result_2:
-        if i == 0:
-            vote_cnt_3 += 1
-        elif i == 1:
-            vote_cnt_2 += 1
-        elif i == 2:
-            vote_cnt_0 += 1
-            vote_cnt_1 += 1
-    print(
-        f"In result_2: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    for i in result_3:
-        if i == 0:
-            vote_cnt_else += 1
-        elif i == 1:
-            vote_cnt_3 += 1
-        elif i == 2:
-            vote_cnt_0 += 1
-            vote_cnt_1 += 1
-            vote_cnt_2 += 1
-    print(
-        f"In result_3: {vote_cnt_0} + {vote_cnt_1} + {vote_cnt_2} + {vote_cnt_3} + {vote_cnt_else}"
-    )
-    return [vote_cnt_0, vote_cnt_1, vote_cnt_2, vote_cnt_3]
+def calculate_score(n, r, class_score):
+    """ calculate voting score
+    r is the compare result (0: >, 1: =, 2: <)
+
+
+    """
+    if r == 0:  # bigger
+        score = 1 / (3 - n)
+
+        for idx in range(n + 1, 4):
+            class_score[idx] += score
+    elif r == 1:  # same
+        class_score[n] += 1
+    else:  # smaller
+        score = 1 / n
+        for idx in range(n):
+            class_score[idx] += score
+
+    return class_score
+
+
+def calculate_score_all(n, r, class_score):
+    if r == 0:  # bigger
+        for idx in range(n + 1, 4):
+            class_score[idx] += 1
+    elif r == 1:  # same
+        class_score[n] += 1
+    else:  # smaller
+        for idx in range(n):
+            class_score[idx] += 1
+    return class_score
+
+
+def vote_results(results: List):
+
+    class_score = [0] * 4
+    # class_score[4] is other case
+    for r0, r1, r2, r3 in zip(results[0], results[1], results[2], results[3]):
+
+        class_score = calculate_score_all(0, r0, class_score)
+        class_score = calculate_score_all(1, r1, class_score)
+        class_score = calculate_score_all(2, r2, class_score)
+        class_score = calculate_score_all(3, r3, class_score)
+
+    return class_score
 
 
 def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
@@ -304,7 +322,6 @@ def get_distmat_heatmap(df, targets):
     return confmat_heatmap.get_figure()
 
 
-
 def get_confmat(df):
     df = pd.DataFrame(df.detach().cpu().numpy())
     plt.clf()  # ADD THIS LINE
@@ -334,6 +351,95 @@ def get_feature_df(features, targets):
     df["LABEL"] = df["LABEL"].map(label_dict)
 
     return df
+
+
+# Simple implementation of the K-means algorithm:
+
+
+def KMeans(x, K=10, Niter=10, verbose=True):
+    """Implements Lloyd's algorithm for the Euclidean metric."""
+
+    start = time.time()
+    N, D = x.shape  # Number of samples, dimension of the ambient space
+
+    c = x[:K, :].clone()  # Simplistic initialization for the centroids
+
+    x_i = LazyTensor(x.view(N, 1, D))  # (N, 1, D) samples
+    c_j = LazyTensor(c.view(1, K, D))  # (1, K, D) centroids
+
+    # K-means loop:
+    # - x  is the (N, D) point cloud,
+    # - cl is the (N,) vector of class labels
+    # - c  is the (K, D) cloud of cluster centroids
+    for _ in range(Niter):
+        # E step: assign points to the closest cluster -------------------------
+        D_ij = ((x_i - c_j) ** 2).sum(-1)  # (N, K) symbolic squared distances
+        cl = D_ij.argmin(dim=1).long().view(-1)  # Points -> Nearest cluster
+
+        # M step: update the centroids to the normalized cluster average: ------
+        # Compute the sum of points per cluster:
+        c.zero_()
+        c.scatter_add_(0, cl[:, None].repeat(1, D), x)
+
+        # Divide by the number of points per cluster:
+        Ncl = torch.bincount(cl, minlength=K).type_as(c).view(K, 1)
+        c /= Ncl  # in-place division to compute the average
+
+    if verbose:  # Fancy display -----------------------------------------------
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        end = time.time()
+        print(f"K-means for the Euclidean metric with {N:,} points in dimension {D:,}, K = {K:,}:")
+        print(
+            "Timing for {} iterations: {:.5f}s = {} x {:.5f}s\n".format(
+                Niter, end - start, Niter, (end - start) / Niter
+            )
+        )
+
+    return cl, c
+
+
+def KMeans_cosine(x, K=10, Niter=10, verbose=True):
+    """Implements Lloyd's algorithm for the Cosine similarity metric."""
+    start = time.time()
+    N, D = x.shape  # Number of samples, dimension of the ambient space
+
+    c = x[:K, :].clone()  # Simplistic initialization for the centroids
+    # Normalize the centroids for the cosine similarity:
+    c = torch.nn.functional.normalize(c, dim=1, p=2)
+
+    x_i = LazyTensor(x.view(N, 1, D))  # (N, 1, D) samples
+    c_j = LazyTensor(c.view(1, K, D))  # (1, K, D) centroids
+
+    # K-means loop:
+    # - x  is the (N, D) point cloud,
+    # - cl is the (N,) vector of class labels
+    # - c  is the (K, D) cloud of cluster centroids
+    for _ in range(Niter):
+        # E step: assign points to the closest cluster -------------------------
+        S_ij = x_i | c_j  # (N, K) symbolic Gram matrix of dot products
+        cl = S_ij.argmax(dim=1).long().view(-1)  # Points -> Nearest cluster
+
+        # M step: update the centroids to the normalized cluster average: ------
+        # Compute the sum of points per cluster:
+        c.zero_()
+        c.scatter_add_(0, cl[:, None].repeat(1, D), x)
+
+        # Normalize the centroids, in place:
+        c[:] = torch.nn.functional.normalize(c, dim=1, p=2)
+
+    if verbose:  # Fancy display -----------------------------------------------
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        end = time.time()
+        print(f"K-means for the cosine similarity with {N:,} points in dimension {D:,}, K = {K:,}:")
+        print(
+            "Timing for {} iterations: {:.5f}s = {} x {:.5f}s\n".format(
+                Niter, end - start, Niter, (end - start) / Niter
+            )
+        )
+
+    return cl, c
 
 
 class CosineAnnealingWarmUpRestarts(_LRScheduler):
@@ -437,13 +543,12 @@ def triplet_margin_with_distance_loss(
     else:
         return output
 
+
 class TripletLoss(nn.Module):
     """Triplet loss with hard positive/negative mining.
-
     Reference:
     Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
     Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
-
     Args:
     - margin (float): margin for triplet.
     """
@@ -462,7 +567,7 @@ class TripletLoss(nn.Module):
         n = inputs.size(0)
 
         # Compute pairwise distance, replace by the official when merged
-        dist = torch.cdist(inputs, inputs, compute_mode='donot_use_mm_for_euclid_dist')
+        dist = torch.cdist(inputs, inputs, compute_mode="donot_use_mm_for_euclid_dist")
 
         # For each anchor, find the hardest positive and negative
         mask = targets.expand(n, n).eq(targets.expand(n, n).t())
@@ -478,7 +583,7 @@ class TripletLoss(nn.Module):
         return self.ranking_loss(dist_an, dist_ap, y), dist
         # This is same as " max( D(a,p)-D(a,n) + margin, 0 ) "
 
-        
+
 def get_max(lst):
     return torch.max(lst).unsqueeze(0)
 
@@ -489,11 +594,9 @@ def get_min(lst):
 
 class TripletLossWithGL(nn.Module):
     """Triplet loss with hard positive/negative mining and Greater/Less.
-
     Reference:
     Hermans et al. In Defense of the Triplet Loss for Person Re-Identification. arXiv:1703.07737.
     Code imported from https://github.com/Cysu/open-reid/blob/master/reid/loss/triplet.py.
-
     Args:
     - margin (float): margin for triplet.
     """
@@ -510,8 +613,8 @@ class TripletLossWithGL(nn.Module):
         """
         n = inputs.size(0)
 
-        # Make a pairwise distance matrix        
-        dist = torch.cdist(inputs, inputs, 2,compute_mode='donot_use_mm_for_euclid_dist')
+        # Make a pairwise distance matrix
+        dist = torch.cdist(inputs, inputs, 2, compute_mode="donot_use_mm_for_euclid_dist")
         # Make a relationship mask based on the anchor
         mask_eq = torch.mul(targets.expand(n, n).eq(targets.expand(n, n).t()), 1)  # =
         mask_gt = torch.mul(targets.expand(n, n).gt(targets.expand(n, n).t()), 2)  # <
@@ -547,10 +650,11 @@ class TripletLossWithGL(nn.Module):
 
         # Compute Triplet loss
         loss = 0
-        loss += F.relu(hard_ap - abs(hard_an_g - hard_an_l) + self.margin).mean()  # " max( D(a,p) - |D(a,n>)-D(a,n<)| + margin, 0 ) "
+        loss += F.relu(
+            hard_ap - abs(hard_an_g - hard_an_l) + self.margin
+        ).mean()  # " max( D(a,p) - |D(a,n>)-D(a,n<)| + margin, 0 ) "
         # loss += F.relu(hard_ap - hard_an_g + self.margin).mean()  # " max( D(a,p) - D(a,n>) + margin, 0 ) "
         # loss += F.relu(hard_ap - hard_an_l + self.margin).mean()  # " max( D(a,p) - D(a,n<) + margin, 0 ) "
 
         # return torch.div(loss, 3), dist, cnt
         return loss, dist, cnt
-

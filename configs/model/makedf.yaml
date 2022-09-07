@@ -1,0 +1,6 @@
+_target_: src.models.make_df_module.MakeDfLitModule
+
+name: vit_large_r50_s32_384
+lr: 1e-4
+pretrained: True
+module_type: 'make_df'

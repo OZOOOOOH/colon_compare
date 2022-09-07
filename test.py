@@ -1,7 +1,7 @@
 import dotenv
 import hydra
 from omegaconf import DictConfig
-
+import warnings
 # load environment variables from `.env` file if it exists
 # recursively searches for `.env` in all folders starting from work dir
 dotenv.load_dotenv(override=True)
@@ -17,6 +17,7 @@ def main(config: DictConfig):
 
     # Applies optional utilities
     utils.extras(config)
+    warnings.filterwarnings(action='ignore')
 
     # Evaluate model
     return test(config)

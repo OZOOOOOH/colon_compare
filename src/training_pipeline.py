@@ -16,7 +16,8 @@ from src import utils
 log = utils.get_logger(__name__)
 
 
-def train(config: DictConfig) -> Optional[float]:  # sourcery no-metrics
+def train(config: DictConfig) -> Optional[float]:
+    # sourcery skip: raise-specific-error
     """Contains the training pipeline.
     Can additionally evaluate model on a testset, using best weights achieved during training.
 
@@ -55,11 +56,8 @@ def train(config: DictConfig) -> Optional[float]:  # sourcery no-metrics
                 callbacks.append(hydra.utils.instantiate(cb_conf))
 
     # config.logger
-    if 'logger' in config.keys():
-        config.logger.wandb.name = config.model.name + '_scheduler_' + config.model.scheduler + '_lr_' \
-                                   + str(config.model.lr) + '_batchsize_' + str(
-            config.datamodule.batch_size) + '_margin_' + str(
-            config.model.margin)+ '_loss_w_'+str(config.model.loss_weight)+ '_scale_' + str(config.model.scale)
+    if len(config['logger'])>0 and list(config['logger'].keys())[0] == 'wandb':
+        config.logger.wandb.name = f'{config.model.name}_scheduler_{config.model.scheduler}_lr_{str(config.model.lr)}_batchsize_{str(config.datamodule.batch_size)}_loss_weight_{str(config.model.loss_weight)}_sampling_{config.datamodule.data_ratio}_seed_{config.seed}'
 
     # Init lightning loggers
     logger: List[LightningLoggerBase] = []

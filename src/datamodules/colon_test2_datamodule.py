@@ -1,0 +1,65 @@
+from torch.utils.data import Dataset
+from src.utils import bring_dataset_csv
+from cv2 import cv2
+import random
+import glob
+from collections import Counter
+from src.datamodules.colon_datamodule import ColonDataset, ColonDataModule
+# from torchsampler import ImbalancedDatasetSampler
+
+
+class ColonTestDataset(Dataset):
+    def __init__(self, pair_list, transform=None):
+        self.pair_list = pair_list
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.pair_list)
+
+    def __getitem__(self, idx):
+        pair = self.pair_list[idx]
+        image = cv2.imread(pair[0])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        label = pair[1]
+        if self.transform:
+            image = self.transform(image=image)
+
+        return image["image"], label    
+
+class ColonTestDataModule(ColonDataModule):
+    def __init__(
+            self,
+            data_dir: str = "./",
+            img_size: int = 256,
+            num_workers: int = 0,
+            batch_size: int = 16,
+            pin_memory=False,
+            drop_last=False,
+            data_name='colon'
+    ):
+        super().__init__()
+    def setup(self, stage=None):
+        # Assign train/val/test datasets for use in dataloaders
+        # Test dataset
+        if stage == "fit" or stage is None:
+            # Random train-validation split
+            train_df, valid_df = bring_dataset_csv(datatype='COLON_MANUAL_512', stage=None)
+            # Train dataset
+            self.train_dataset = ColonDataset(train_df, self.train_transform)
+
+        else:
+            test_set = prepare_colon_wsi_patch()
+            self.test_dataset = ColonTestDataset(test_set, self.test_transform)
+        
+
+def prepare_colon_wsi_patch():
+    def load_data_info_from_list(data_dir):
+
+        file_list = glob.glob(f'{data_dir}/*/*/*.png')            
+        label_list = [int(file_path.split('_')[-1].split('.')[0]) - 1 for file_path in file_list]
+        
+        return list(zip(file_list, label_list))
+
+    data_dir = '/home/compu/jh/data/colon_45WSIs_1144_08_step05_05'
+
+    return load_data_info_from_list(data_dir)

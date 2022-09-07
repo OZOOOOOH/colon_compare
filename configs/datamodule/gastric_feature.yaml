@@ -1,4 +1,4 @@
-_target_: src.datamodules.gastric_datamodule.GastricDataModule
+_target_: src.datamodules.feature_datamodule.GastricDataModule
 
 data_dir: ${data_dir} # data_dir is specified in config.yaml
 batch_size: 16

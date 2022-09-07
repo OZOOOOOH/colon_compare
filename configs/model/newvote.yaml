@@ -1,8 +1,9 @@
-_target_: src.models.colon_module.ColonLitModule
+_target_: src.models.new_voting_module.VotingLitModule
 
 name: vit_large_r50_s32_384
 
 # only input 224
+
 #['vit_base_patch16_224',
 # 'vit_base_patch32_224',
 # 'vit_large_patch16_224',
@@ -12,7 +13,10 @@ name: vit_large_r50_s32_384
 # 'vit_small_r26_s32_224',
 # 'vit_tiny_patch16_224',
 # 'vit_tiny_r_s16_p8_224']
+
+
 # only input 384
+
 #['beit_base_patch16_384',
 # 'beit_large_patch16_384',
 # 'cait_m36_384',
@@ -69,14 +73,13 @@ eta_min: 1e-6
 pretrained: True
 scheduler: 'ReduceLROnPlateau'
 factor: 0.5
-patience: 6
+patience: 3
 eps: 1e-8
-loss_weight: 0.2
-threshold: 0.8
-num_sample: 16
+loss_weight: 0.25
+threshold: 0.7
+num_sample: 30
 key: 'prob'
-sampling: 'random'
+sampling: 'trust'
 decide_by_total_probs: False
 weighted_sum: False
-margin: 1.0
-scale: 64.0
+module_type: 'voting'

@@ -1,4 +1,4 @@
-_target_: src.models.gastric_module.GastricLitModule
+_target_: src.models.voting_module.VotingLitModule
 
 name: vit_large_r50_s32_384
 
@@ -75,10 +75,12 @@ scheduler: 'ReduceLROnPlateau'
 factor: 0.5
 patience: 3
 eps: 1e-8
-loss_weight: 0.25
-threshold: 0.8
+loss_weight: 0.25 
+threshold: 0.2
 num_sample: 10
-key: 'prob'
-sampling: 'random'
+key: 'ent'
+sampling: 'trust'
 decide_by_total_probs: False
 weighted_sum: False
+module_type: 'voting'
+seed: 123

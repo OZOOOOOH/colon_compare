@@ -3,7 +3,13 @@ from typing import List
 
 import hydra
 from omegaconf import DictConfig
-from pytorch_lightning import LightningDataModule, LightningModule, Trainer, seed_everything
+from pytorch_lightning import (
+    LightningDataModule,
+    LightningModule,
+    Trainer,
+    seed_everything,
+    Callback,
+)
 from pytorch_lightning.loggers import LightningLoggerBase
 import yaml
 from src import utils
@@ -38,14 +44,43 @@ def test(config: DictConfig) -> None:
     log.info(f"Instantiating model <{config.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(config.model)
 
-    with open(config.ckpt_path[:config.ckpt_path.find('check')]+'.hydra/config.yaml', 'r') as file:
-        documents = yaml.full_load(file)
-        margin = documents['model']['margin']
-        loss_weight = documents['model']['loss_weight']
+    # with open(config.ckpt_path[:config.ckpt_path.find('check')]+'.hydra/config.yaml', 'r') as file:
+    #     documents = yaml.full_load(file)
+    #     margin = documents['model']['margin']
+    #     loss_weight = documents['model']['loss_weight']
 
-    if 'logger' in config and list(config['logger'].keys())[0] == 'wandb':
-        config.logger.wandb.name = f'batch_size_{str(config.datamodule.batch_size)}_margin_{str(margin)}_loss_w_{str(loss_weight)}'
+    if len(config["logger"]) > 0 and list(config["logger"].keys())[0] == "wandb":
+        config.logger.wandb.name = (
+            (
+                (
+                    (
+                        (
+                            (
+                                f"{config.model.name}_{config.model.key}{str(config.model.threshold)}_threshold_"
+                                + config.model.sampling
+                            )
+                            + "_Sampling_"
+                        )
+                        +str(config.model.num_sample)
+                        + "_weighted_sum_"
+                    )
+                    + str(config.model.weighted_sum)
+                    + "_decide_total_probs_"
+                )
+                + str(config.model.decide_by_total_probs)
+                + "_sampling_"
+            )
+            + str(config.datamodule.data_ratio)
+            + "_seed_"
+        ) + str(config.seed)
 
+    # Init lightning callbacks
+    callbacks: List[Callback] = []
+    if "callbacks" in config:
+        for _, cb_conf in config.callbacks.items():
+            if "_target_" in cb_conf:
+                log.info(f"Instantiating callback <{cb_conf._target_}>")
+                callbacks.append(hydra.utils.instantiate(cb_conf))
 
     # Init lightning loggers
     logger: List[LightningLoggerBase] = []
@@ -57,15 +92,20 @@ def test(config: DictConfig) -> None:
 
     # Init lightning trainer
     log.info(f"Instantiating trainer <{config.trainer._target_}>")
-    trainer: Trainer = hydra.utils.instantiate(config.trainer, logger=logger)
+    trainer: Trainer = hydra.utils.instantiate(config.trainer, logger=logger, callbacks=callbacks)
 
     # Log hyperparameters
     if logger:
         trainer.logger.log_hyperparams({"ckpt_path": config.ckpt_path})
 
     log.info("Starting testing!")
-    trainer.test(model=model, datamodule=datamodule, ckpt_path=config.ckpt_path)
+    trainer.test(
+        model=model,
+        datamodule=datamodule,
+        ckpt_path=config.ckpt_path,
+    )
     import wandb
+
     wandb.finish()
 
     # utils.finish(

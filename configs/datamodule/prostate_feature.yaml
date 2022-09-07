@@ -1,4 +1,4 @@
-_target_: src.datamodules.gastric_datamodule.GastricDataModule
+_target_: src.datamodules.feature_datamodule.ProstateDataModule
 
 data_dir: ${data_dir} # data_dir is specified in config.yaml
 batch_size: 16
@@ -6,5 +6,5 @@ num_workers: 0
 pin_memory: True
 img_size: 384
 drop_last: False
-data_name: 'gastric'
+data_name: 'prostate'
 data_ratio: 1.0

@@ -1,16 +1,13 @@
 _target_: pytorch_lightning.Trainer
-
-#gpus: "2,3"
-
+accelerator: gpu
+devices: [0]
 min_epochs: 1
 max_epochs: 100
 precision: 16
 #plugins:
 #  _target_: pytorch_lightning.plugins.DDPPlugin
 #  find_unused_parameters: True
-strategy: 'ddp'
-accelerator: 'gpu'
-devices: '4,5,6'
+
 # fast_dev_run: True
 num_sanity_val_steps: 2
 # number of validation steps to execute at the beginning of the training

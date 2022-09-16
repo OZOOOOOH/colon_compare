@@ -34,7 +34,9 @@ def test(config: DictConfig) -> None:
 
     # Convert relative ckpt path to absolute path if necessary
     if not os.path.isabs(config.ckpt_path):
-        config.ckpt_path = os.path.join(hydra.utils.get_original_cwd(), config.ckpt_path)
+        config.ckpt_path = os.path.join(
+            hydra.utils.get_original_cwd(), config.ckpt_path
+        )
 
     # Init lightning datamodule
     log.info(f"Instantiating datamodule <{config.datamodule._target_}>")
@@ -43,11 +45,6 @@ def test(config: DictConfig) -> None:
     # Init lightning model
     log.info(f"Instantiating model <{config.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(config.model)
-
-    # with open(config.ckpt_path[:config.ckpt_path.find('check')]+'.hydra/config.yaml', 'r') as file:
-    #     documents = yaml.full_load(file)
-    #     margin = documents['model']['margin']
-    #     loss_weight = documents['model']['loss_weight']
 
     if len(config["logger"]) > 0 and list(config["logger"].keys())[0] == "wandb":
         config.logger.wandb.name = (
@@ -61,7 +58,7 @@ def test(config: DictConfig) -> None:
                             )
                             + "_Sampling_"
                         )
-                        +str(config.model.num_sample)
+                        + str(config.model.num_sample)
                         + "_weighted_sum_"
                     )
                     + str(config.model.weighted_sum)
@@ -92,7 +89,9 @@ def test(config: DictConfig) -> None:
 
     # Init lightning trainer
     log.info(f"Instantiating trainer <{config.trainer._target_}>")
-    trainer: Trainer = hydra.utils.instantiate(config.trainer, logger=logger, callbacks=callbacks)
+    trainer: Trainer = hydra.utils.instantiate(
+        config.trainer, logger=logger, callbacks=callbacks
+    )
 
     # Log hyperparameters
     if logger:
@@ -107,11 +106,3 @@ def test(config: DictConfig) -> None:
     import wandb
 
     wandb.finish()
-
-    # utils.finish(
-    #     config=config,
-    #     model=model,
-    #     datamodule=datamodule,
-    #     trainer=trainer,
-    #     logger=logger,
-    # )

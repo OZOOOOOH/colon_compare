@@ -3,7 +3,14 @@ import torch
 import torch.nn as nn
 import timm
 from pytorch_lightning import LightningModule
-from torchmetrics import MaxMetric, ConfusionMatrix, F1Score, CohenKappa, SumMetric, Accuracy
+from torchmetrics import (
+    MaxMetric,
+    ConfusionMatrix,
+    F1Score,
+    CohenKappa,
+    SumMetric,
+    Accuracy,
+)
 from src.utils import get_confmat
 import wandb
 
@@ -25,12 +32,6 @@ class Classify4LitModule(LightningModule):
         patience=5,
         eps=1e-08,
         loss_weight=0.5,
-        threshold=0.8,
-        num_sample=10,
-        key="ent",
-        sampling="random",
-        decide_by_total_probs=False,
-        weighted_sum=False,
         module_type="classify4",
     ):
         super().__init__()
@@ -39,22 +40,23 @@ class Classify4LitModule(LightningModule):
         self.model = timm.create_model(
             self.hparams.name, pretrained=self.hparams.pretrained, num_classes=4
         )
-        self.discriminator_layer1 = nn.Sequential(
-            nn.Linear(self.model.classifier.in_features, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 4),
-        ) if 'net' in self.hparams.name else nn.Sequential(
-            nn.Linear(self.model.head.in_features, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 4),
+        self.discriminator_layer1 = (
+            nn.Sequential(
+                nn.Linear(self.model.classifier.in_features, 512),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(512, 256),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(256, 4),
+            )
+            if "net" in self.hparams.name
+            else nn.Sequential(
+                nn.Linear(self.model.head.in_features, 512),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(512, 256),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(256, 4),
+            )
         )
-        # discriminator 구조
-        # 레이어 - 드롭아웃 - 레이어
-        # 512 512 4 3
 
         self.criterion = torch.nn.CrossEntropyLoss()
         self.train_acc = Accuracy()
@@ -64,18 +66,28 @@ class Classify4LitModule(LightningModule):
         self.confusion_matrix = ConfusionMatrix(num_classes=4)
         self.f1_score = F1Score(num_classes=4, average="macro")
         self.cohen_kappa = CohenKappa(num_classes=4, weights="quadratic")
-        # self.cnt = SumMetric()
 
     def forward(self, x):  # 4 classification
         return self.discriminator_layer1(self.get_features(x.float()))
 
     def get_features(self, x):
-        # get features from model
-        features = self.model.global_pool(self.model.forward_features(x.float())) if 'densenet' in self.hparams.name else self.model.forward_features(x.float())
-        features = features if 'densenet' in self.hparams.name else self.model.forward_head(features, pre_logits=True)
+        """get features from timm models
+
+        Since densenet code is quite different from vit models, the extract part is different
+        """
+        features = (
+            self.model.global_pool(self.model.forward_features(x.float()))
+            if "densenet" in self.hparams.name
+            else self.model.forward_features(x.float())
+        )
+        features = (
+            features
+            if "densenet" in self.hparams.name
+            else self.model.forward_head(features, pre_logits=True)
+        )
         return features
-        
-    def step_only_classification(self, batch):
+
+    def step(self, batch):
         x, y = batch
         features = self.get_features(x)
         logits_4cls = self.discriminator_layer1(features)
@@ -84,7 +96,7 @@ class Classify4LitModule(LightningModule):
         return loss_4cls, logits_4cls, preds_4cls, y
 
     def training_step(self, batch, batch_idx):
-        loss, logits_4cls, preds_4cls, targets = self.step_only_classification(batch)
+        loss, logits_4cls, preds_4cls, targets = self.step(batch)
         acc = self.train_acc(preds=preds_4cls, target=targets)
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=False)
         self.log("train/acc", acc, on_step=True, on_epoch=True, prog_bar=True)
@@ -102,7 +114,7 @@ class Classify4LitModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        loss, logits_4cls, preds_4cls, targets = self.step_only_classification(batch)
+        loss, logits_4cls, preds_4cls, targets = self.step(batch)
         acc = self.val_acc(preds_4cls, targets)
 
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -115,10 +127,12 @@ class Classify4LitModule(LightningModule):
         # outputs = [{'loss': batch_0_loss}, {'loss': batch_1_loss}, ..., {'loss': batch_n_loss}]
         acc = self.val_acc.compute()
         self.val_acc_best.update(acc)
-        self.log("val/acc_best", self.val_acc_best.compute(), on_epoch=True, prog_bar=True)
+        self.log(
+            "val/acc_best", self.val_acc_best.compute(), on_epoch=True, prog_bar=True
+        )
 
     def test_step(self, batch, batch_idx):
-        loss, logits_4cls, preds_4cls, target_4cls = self.step_only_classification(batch)
+        loss, logits_4cls, preds_4cls, target_4cls = self.step(batch)
         self.confusion_matrix(preds_4cls, target_4cls)
         self.f1_score(preds_4cls, target_4cls)
         self.cohen_kappa(preds_4cls, target_4cls)
@@ -129,6 +143,10 @@ class Classify4LitModule(LightningModule):
         return {"loss": loss, "acc": acc, "preds": preds_4cls, "targets": target_4cls}
 
     def test_epoch_end(self, outputs):
+        """
+        compute the Confusion Matrix, F1 score, Quadratic Weighted Kappa
+
+        """
 
         cm = self.confusion_matrix.compute()
         f1 = self.f1_score.compute()
@@ -151,7 +169,9 @@ class Classify4LitModule(LightningModule):
 
     def configure_optimizers(self):
         self.optimizer = torch.optim.Adam(
-            self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay
+            self.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay,
         )
         self.scheduler = self.get_scheduler()
         if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -164,6 +184,9 @@ class Classify4LitModule(LightningModule):
         return {"optimizer": self.optimizer, "lr_scheduler": self.scheduler}
 
     def get_scheduler(self):
+        """
+        get the scheduler by hydra parameters
+        """
         schedulers = {
             "ReduceLROnPlateau": torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
@@ -174,7 +197,10 @@ class Classify4LitModule(LightningModule):
                 eps=self.hparams.eps,
             ),
             "CosineAnnealingLR": torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, T_max=self.hparams.t_max, eta_min=self.hparams.min_lr, last_epoch=-1
+                self.optimizer,
+                T_max=self.hparams.t_max,
+                eta_min=self.hparams.min_lr,
+                last_epoch=-1,
             ),
             "CosineAnnealingWarmRestarts": torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
@@ -183,8 +209,12 @@ class Classify4LitModule(LightningModule):
                 eta_min=self.hparams.min_lr,
                 last_epoch=-1,
             ),
-            "StepLR": torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=200, gamma=0.1),
-            "ExponentialLR": torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.95),
+            "StepLR": torch.optim.lr_scheduler.StepLR(
+                self.optimizer, step_size=200, gamma=0.1
+            ),
+            "ExponentialLR": torch.optim.lr_scheduler.ExponentialLR(
+                self.optimizer, gamma=0.95
+            ),
         }
         if self.hparams.scheduler not in schedulers:
             raise ValueError(f"Unknown scheduler: {self.hparams.scheduler}")

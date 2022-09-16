@@ -3,10 +3,9 @@ from albumentations.core.composition import Compose, OneOf
 from albumentations.pytorch import ToTensorV2
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
-from src.utils import bring_dataset_csv
+from src.utils import bring_colon_dataset_csv
 from cv2 import cv2
-import pandas as pd
-# from torchsampler import ImbalancedDatasetSampler
+
 
 class ColonDataset(Dataset):
     def __init__(self, df, transform=None):
@@ -24,77 +23,66 @@ class ColonDataset(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         if self.transform:
             image = self.transform(image=image)
-        return image['image'], label
+        return image["image"], label
+
 
 class ColonDataModule(LightningDataModule):
+    """
+    There is 1 dataset of colon
+
+    - (A) is the datasets that has Training Validation Testing I
+    https://www.sciencedirect.com/science/article/pii/S1361841521002516
+
+    This datamodule use (A) for train, validation, test
+    """
+
     def __init__(
-            self,
-            data_dir: str = "./",
-            img_size: int = 256,
-            num_workers: int = 0,
-            batch_size: int = 16,
-            pin_memory=False,
-            drop_last=False,
-            data_name='colon',
-            data_ratio=1.0
+        self,
+        data_dir: str = "./",
+        img_size: int = 256,
+        num_workers: int = 0,
+        batch_size: int = 16,
+        pin_memory=False,
+        drop_last=False,
+        data_name="colon",
+        data_ratio=1.0,
     ):
         super().__init__()
         self.save_hyperparameters(logger=False)
         resize_value = 256 if self.hparams.img_size == 224 else 456
-        # Train augmentation policy
         self.train_transform = Compose(
             [
-                A.RandomResizedCrop(height=self.hparams.img_size, width=self.hparams.img_size),
-
-                OneOf([
-                    A.HorizontalFlip(p=1),
-                    # Flip the input horizontally around the y-axis.
-                    A.VerticalFlip(p=1),
-                    # Flip the input Vertically around the x-axis.
-                    A.RandomRotate90(p=1),
-                ]),
-
-                A.ShiftScaleRotate(
-                    shift_limit=0.05,
-                    scale_limit=0.05,
-                    rotate_limit=15,
-                    p=0.5
+                A.RandomResizedCrop(
+                    height=self.hparams.img_size, width=self.hparams.img_size
                 ),
-                # Randomly apply affine transforms: translate, scale and rotate the input
-
-                # A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2, p=0.5),
-                # color augmentation
-
-                OneOf([
-                    # A.MotionBlur(p=1),
-                    # A.OpticalDistortion(p=1),
-                    A.GaussNoise(p=1),
-                    # A_T.Adv
-                    A.GaussianBlur(p=1),
-                    A.ColorJitter(),
-
-                ]),
-                # A.cutout(),
+                OneOf(
+                    [
+                        A.HorizontalFlip(p=1),
+                        A.VerticalFlip(p=1),
+                        A.RandomRotate90(p=1),
+                    ]
+                ),
+                A.ShiftScaleRotate(
+                    shift_limit=0.05, scale_limit=0.05, rotate_limit=15, p=0.5
+                ),
+                OneOf(
+                    [
+                        A.GaussNoise(p=1),
+                        A.GaussianBlur(p=1),
+                        A.ColorJitter(),
+                    ]
+                ),
                 A.RandomBrightness(limit=0.15, p=0.5),
-                # Randomly change brightness of the input image.
                 A.Normalize(),
-                # Normalization is applied by the formula: img = (img - mean * max_pixel_value) / (std * max_pixel_value)
-
                 ToTensorV2(),
-                # Convert image and mask to torch.Tensor
-
             ]
         )
-        # Validation/Test augmentation policy
         self.test_transform = Compose(
             [
                 A.Resize(height=self.hparams.img_size, width=self.hparams.img_size),
-                # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 A.Normalize(),
                 ToTensorV2(),
-
             ]
-
         )
 
     @property
@@ -102,19 +90,20 @@ class ColonDataModule(LightningDataModule):
         return 4
 
     def setup(self, stage=None):
-        # Assign train/val/test datasets for use in dataloaders
         if stage == "fit" or stage is None:
-            # Random train-validation split
-            train_df, valid_df = bring_dataset_csv(datatype='COLON_MANUAL_512', stage=None)
-            if self.hparams.data_ratio<1.0:
-                train_df=train_df.groupby('class').apply(lambda x:x.sample(frac=self.hparams.data_ratio)).reset_index(drop=True)
-            # Train dataset
+            train_df, valid_df = bring_colon_dataset_csv(
+                datatype="COLON_MANUAL_512", stage=None
+            )
+            if self.hparams.data_ratio < 1.0:
+                train_df = (
+                    train_df.groupby("class")
+                    .apply(lambda x: x.sample(frac=self.hparams.data_ratio))
+                    .reset_index(drop=True)
+                )
             self.train_dataset = ColonDataset(train_df, self.train_transform)
-            # Validation dataset
             self.valid_dataset = ColonDataset(valid_df, self.test_transform)
-            # Test dataset
         else:
-            test_df = bring_dataset_csv(datatype='COLON_MANUAL_512', stage='test')
+            test_df = bring_colon_dataset_csv(datatype="COLON_MANUAL_512", stage="test")
             self.test_dataset = ColonDataset(test_df, self.test_transform)
 
     def train_dataloader(self):
@@ -125,7 +114,6 @@ class ColonDataModule(LightningDataModule):
             pin_memory=self.hparams.pin_memory,
             drop_last=True,
             shuffle=True,
-            # sampler=ImbalancedDatasetSampler(self.train_dataset),
         )
 
     def val_dataloader(self):
@@ -135,7 +123,7 @@ class ColonDataModule(LightningDataModule):
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             drop_last=True,
-            shuffle=False
+            shuffle=False,
         )
 
     def test_dataloader(self):

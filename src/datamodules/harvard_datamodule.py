@@ -1,16 +1,27 @@
 from glob import glob
-# from torchsampler import ImbalancedDatasetSampler
 from src.datamodules.colon_datamodule import ColonDataset, ColonDataModule
 from src.datamodules.colon_test2_datamodule import ColonTestDataset
 import pandas as pd
+
+
 class HarvardDataset(ColonTestDataset):
     pass
+
+
 class HarvardDataset_pd(ColonDataset):
     def __init__(self, df, transform=None):
         super().__init__()
         self.labels = df["label"].values
 
+
 class HarvardDataModule(ColonDataModule):
+    """
+    class 0: 2869
+    class 1: 8828
+    class 2: 7235
+    class 3: 3090
+    """
+
     def __init__(
         self,
         data_dir: str = "./",
@@ -19,19 +30,27 @@ class HarvardDataModule(ColonDataModule):
         batch_size: int = 16,
         pin_memory=False,
         drop_last=False,
-        data_name='harvard',
-        data_ratio=1.0
+        data_name="harvard",
+        data_ratio=1.0,
     ):
         super().__init__()
 
     def setup(self, stage=None):
-        # Assign train/val/test datasets for use in dataloaders
         if stage == "fit" or stage is None:
 
             train_set, valid_set = prepare_prostate_harvard_data(stage="train")
-            if self.hparams.data_ratio<1.0:
-                train_set=pd.DataFrame(train_set, columns =['path','class']).groupby('class').apply(lambda x:x.sample(frac=self.hparams.data_ratio,random_state=42)).reset_index(drop=True)
-                train_set=list(train_set.to_records(index=False))
+            if self.hparams.data_ratio < 1.0:
+                train_set = (
+                    pd.DataFrame(train_set, columns=["path", "class"])
+                    .groupby("class")
+                    .apply(
+                        lambda x: x.sample(
+                            frac=self.hparams.data_ratio, random_state=42
+                        )
+                    )
+                    .reset_index(drop=True)
+                )
+                train_set = list(train_set.to_records(index=False))
 
             self.train_dataset = HarvardDataset(train_set, self.train_transform)
             self.valid_dataset = HarvardDataset(valid_set, self.test_transform)
@@ -40,11 +59,14 @@ class HarvardDataModule(ColonDataModule):
             test_set = prepare_prostate_harvard_data(stage="test")
             self.test_dataset = HarvardDataset(test_set, self.test_transform)
 
+
 def prepare_prostate_harvard_data(stage="train"):
     def load_data_info(pathname):
         file_list = glob(pathname)
 
-        label_list = [int(file_path.split("_")[-1].split(".")[0]) for file_path in file_list]
+        label_list = [
+            int(file_path.split("_")[-1].split(".")[0]) for file_path in file_list
+        ]
 
         return list(zip(file_list, label_list))
 

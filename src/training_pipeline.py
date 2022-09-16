@@ -10,14 +10,12 @@ from pytorch_lightning import (
     seed_everything,
 )
 from pytorch_lightning.loggers import LightningLoggerBase
-# from ray_lightning import RayPlugin
 from src import utils
 
 log = utils.get_logger(__name__)
 
 
 def train(config: DictConfig) -> Optional[float]:
-    # sourcery skip: raise-specific-error
     """Contains the training pipeline.
     Can additionally evaluate model on a testset, using best weights achieved during training.
 
@@ -56,8 +54,8 @@ def train(config: DictConfig) -> Optional[float]:
                 callbacks.append(hydra.utils.instantiate(cb_conf))
 
     # config.logger
-    if len(config['logger'])>0 and list(config['logger'].keys())[0] == 'wandb':
-        config.logger.wandb.name = f'{config.model.name}_scheduler_{config.model.scheduler}_lr_{str(config.model.lr)}_batchsize_{str(config.datamodule.batch_size)}_loss_weight_{str(config.model.loss_weight)}_sampling_{config.datamodule.data_ratio}_seed_{config.seed}'
+    if len(config["logger"]) > 0 and list(config["logger"].keys())[0] == "wandb":
+        config.logger.wandb.name = f"{config.model.name}_scheduler_{config.model.scheduler}_lr_{str(config.model.lr)}_batchsize_{str(config.datamodule.batch_size)}_loss_weight_{str(config.model.loss_weight)}_sampling_{config.datamodule.data_ratio}_seed_{config.seed}"
 
     # Init lightning loggers
     logger: List[LightningLoggerBase] = []
@@ -72,20 +70,6 @@ def train(config: DictConfig) -> Optional[float]:
     trainer: Trainer = hydra.utils.instantiate(
         config.trainer, callbacks=callbacks, logger=logger, _convert_="partial"
     )
-    # plugin = RayPlugin(num_workers=4, num_cpus_per_worker=1, use_gpu=True)
-    # trainer.plugins = [plugin]
-
-    # Send some parameters from config to all lightning loggers
-    # log.info("Logging hyperparameters!")
-    # utils.log_hyperparameters(
-    #     config=config,
-    #     model=model,
-    #     datamodule=datamodule,
-    #     trainer=trainer,
-    #     callbacks=callbacks,
-    #     logger=logger,
-    # )
-
     # Train the model
     if config.get("train"):
         log.info("Starting training!")

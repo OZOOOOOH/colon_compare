@@ -10,6 +10,11 @@ from scipy.stats import entropy
 
 
 class MakeDfLitModule(LightningModule):
+    """
+    This module is used to make dataframe that has entropy, max_probs, targets, preds about test dataset
+
+    """
+
     def __init__(
         self,
         lr: float = 1e-4,
@@ -51,11 +56,13 @@ class MakeDfLitModule(LightningModule):
 
     def forward(self, x):  # 4 classification
         return self.discriminator_layer1(
-            self.model.forward_head(self.model.forward_features(x.float()), pre_logits=True)
+            self.model.forward_head(
+                self.model.forward_features(x.float()), pre_logits=True
+            )
         )
 
     def get_features(self, x):
-        # get features from model
+        """get features from timm models"""
         features = self.model.forward_features(x.float())
         features = self.model.forward_head(features, pre_logits=True)
         return features

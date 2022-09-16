@@ -7,8 +7,6 @@ from torchmetrics import MaxMetric, ConfusionMatrix, F1Score, CohenKappa, Accura
 from src.utils import get_shuffled_label
 from src.utils import get_shuffled_label, get_confmat
 import wandb
-import numpy as np
-
 
 class ClassifyCompareLitModule(LightningModule):
     def __init__(
@@ -27,12 +25,6 @@ class ClassifyCompareLitModule(LightningModule):
         patience=5,
         eps=1e-08,
         loss_weight=0.5,
-        threshold=0.8,
-        num_sample=10,
-        key="ent",
-        sampling="random",
-        decide_by_total_probs=False,
-        weighted_sum=False,
         module_type="classifycompare",
     ):
         super().__init__()
@@ -67,9 +59,6 @@ class ClassifyCompareLitModule(LightningModule):
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(256, 3),
         )
-        # discriminator 구조
-        # 레이어 - 드롭아웃 - 레이어
-        # 512 512 4 3
 
         self.criterion = torch.nn.CrossEntropyLoss()
         self.train_acc = Accuracy()
@@ -88,12 +77,18 @@ class ClassifyCompareLitModule(LightningModule):
         return self.discriminator_layer1(self.get_features(x.float()))
 
     def get_features(self, x):
-        # get features from model
+        """get features from timm models
+
+        Since densenet code is quite different from vit models, the extract part is different        
+        """
         features = self.model.global_pool(self.model.forward_features(x.float())) if 'densenet' in self.hparams.name else self.model.forward_features(x.float())
         features = features if 'densenet' in self.hparams.name else self.model.forward_head(features, pre_logits=True)
         return features
 
     def get_comparison_list(self, origin, shuffle):
+        """
+        get comparison answers from the pair of original and shuffled classes
+        """
         comparison = []
         for i, j in zip(origin.tolist(), shuffle.tolist()):
             if i > j:
@@ -111,7 +106,7 @@ class ClassifyCompareLitModule(LightningModule):
 
         return indices, comparison, shuffle_y
 
-    def step_classify_compare(self, batch):
+    def step(self, batch):
         x, y = batch
         features = self.get_features(x)
         logits_4cls = self.discriminator_layer1(features)
@@ -133,7 +128,7 @@ class ClassifyCompareLitModule(LightningModule):
 
     def training_step(self, batch, batch_idx):
 
-        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_classify_compare(batch)
+        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step(batch)
         acc = self.train_acc(preds=preds_4cls, target=target_4cls)
         acc_compare = self.train_acc_compare(preds=preds_compare, target=comparison)
 
@@ -161,7 +156,7 @@ class ClassifyCompareLitModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_classify_compare(batch)
+        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step(batch)
         acc = self.val_acc(preds_4cls, target_4cls)
         acc_compare = self.val_acc_compare(preds=preds_compare, target=comparison)
 
@@ -197,7 +192,7 @@ class ClassifyCompareLitModule(LightningModule):
 
     def test_step(self, batch, batch_idx):
 
-        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step_classify_compare(batch)
+        loss, preds_4cls, preds_compare, comparison, target_4cls = self.step(batch)
         self.confusion_matrix(preds_4cls, target_4cls)
         self.f1_score(preds_4cls, target_4cls)
         self.cohen_kappa(preds_4cls, target_4cls)

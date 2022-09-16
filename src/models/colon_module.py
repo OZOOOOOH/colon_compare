@@ -5,7 +5,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import timm
 from pytorch_lightning import LightningModule
-from torchmetrics import MaxMetric, ConfusionMatrix, F1Score, CohenKappa, SumMetric, Accuracy
+from torchmetrics import (
+    MaxMetric,
+    ConfusionMatrix,
+    F1Score,
+    CohenKappa,
+    SumMetric,
+    Accuracy,
+)
 import numpy as np
 import pandas as pd
 import wandb
@@ -72,20 +79,13 @@ class ColonLitModule(LightningModule):
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(256, 4),
         )
-        # self.discriminator_layer1 = nn.Sequential(
-        #     nn.Linear(self.model.fc.in_features, 512),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Linear(512, 256),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Linear(256, 4),
-        # )
-        # self.discriminator_layer2 = nn.Sequential(
-        #     nn.Linear(self.model.head.in_features * 2, 512),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Linear(512, 256),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Linear(256, 3),
-        # )
+        self.discriminator_layer2 = nn.Sequential(
+            nn.Linear(self.model.head.in_features * 2, 512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(256, 3),
+        )
         # self.fc_layer = nn.Sequential(
         #     nn.Linear(self.model.head.in_features, 512),
         #     nn.LeakyReLU(0.2, inplace=True),
@@ -100,9 +100,10 @@ class ColonLitModule(LightningModule):
         self.triplet_loss = TripletMarginLoss(
             margin=self.hparams.margin, distance=self.distance, reducer=self.reducer
         )
-        self.miner = TripletMarginMiner(margin=0.2, distance=self.distance, type_of_triplets="hard")
+        self.miner = TripletMarginMiner(
+            margin=0.2, distance=self.distance, type_of_triplets="hard"
+        )
 
-        # self.criterion = nn.CrossEntropyLoss(weight=torch.tensor([0.889, 0.734, 0.573, 0.802]).cuda()) # weighted CE
         self.criterion = nn.CrossEntropyLoss()
         self.arcface = ArcFaceLoss(
             margin=self.hparams.margin,
@@ -193,13 +194,6 @@ class ColonLitModule(LightningModule):
 
         return losses, preds, y, preds_compare, comparison
 
-    # def step_test0(self, batch, stage):  # only classification
-    #     x, y = batch
-    #     logits = self.forward(x)
-    #     loss = self.criterion(logits, y)
-    #     preds = torch.argmax(logits, dim=1)
-    #     return loss, logits, preds, y
-
     def step_test0(self, batch):  # only classification
         x, y = batch
         features = self.model.forward_features(x.float())
@@ -251,7 +245,9 @@ class ColonLitModule(LightningModule):
         probs_4cls = torch.softmax(logits_4cls, dim=1)
         max_probs_4cls = torch.max(probs_4cls, 1)
         origin_preds_4cls = copy.deepcopy(preds_4cls)
-        entropy_4cls = list(map(lambda i: entropy(i), probs_4cls.detach().cpu().numpy()))
+        entropy_4cls = list(
+            map(lambda i: entropy(i), probs_4cls.detach().cpu().numpy())
+        )
         imgs_0, imgs_1, imgs_2, imgs_3 = (
             self.bring_random_trained_data(x)
             if self.hparams.sampling == "random"
@@ -260,7 +256,13 @@ class ColonLitModule(LightningModule):
 
         total_imgs = [imgs_0, imgs_1, imgs_2, imgs_3]
         cnt_correct_diff, new_preds_4cls = self.predict_using_voting_cosine(
-            entropy_4cls, max_probs_4cls, features, total_imgs, probs_4cls, preds_4cls, y
+            entropy_4cls,
+            max_probs_4cls,
+            features,
+            total_imgs,
+            probs_4cls,
+            preds_4cls,
+            y,
         )
         cnt_diff = sum(x != y for x, y in zip(origin_preds_4cls, new_preds_4cls))
         # print(f'length of preds : {len(origin_preds_4cls)} // The number of changed : {cnt_diff}')
@@ -268,7 +270,15 @@ class ColonLitModule(LightningModule):
         # losses = loss + loss_compare * self.hparams.loss_weight
         loss = loss_4cls
 
-        return loss, logits_4cls, origin_preds_4cls, new_preds_4cls, y, cnt_diff, cnt_correct_diff
+        return (
+            loss,
+            logits_4cls,
+            origin_preds_4cls,
+            new_preds_4cls,
+            y,
+            cnt_diff,
+            cnt_correct_diff,
+        )
 
     def step_test3(self, batch):  # only classification
         x, y = batch
@@ -306,7 +316,9 @@ class ColonLitModule(LightningModule):
 
     def step_triplet2(self, batch):
         x, y = batch
-        features = self.model.forward_head(self.model.forward_features(x.float()), pre_logits=True)
+        features = self.model.forward_head(
+            self.model.forward_features(x.float()), pre_logits=True
+        )
         # triplet = TripletLossWithGL(margin=self.hparams.margin)
         # loss_triplet, dist_matrix, cnt = triplet(features, y)
 
@@ -351,28 +363,29 @@ class ColonLitModule(LightningModule):
 
         return loss, loss_4cls, loss_arcface, preds_4cls, y, features
 
-    def step_only_classify(self, batch):
-        x, y = batch
-        features = self.model.forward_features(x.float())
-        logits_4cls = self.model.forward_head(features, pre_logits=False)
-
-        # logits_4cls = self.discriminator_layer1(features)
-        loss_4cls = self.criterion(logits_4cls, y)
-        preds_4cls = torch.argmax(logits_4cls, dim=1)
-
-        loss = loss_4cls
-
-        return loss, preds_4cls, y, features
-
-
     def training_step(self, batch, batch_idx):
         # loss_4cls, preds_4cls, target_4cls = self.step_triplet2(batch)
-        loss, loss_4cls, loss_arcface, preds_4cls, target_4cls, features = self.step_arcface(batch)
+        (
+            loss,
+            loss_4cls,
+            loss_arcface,
+            preds_4cls,
+            target_4cls,
+            features,
+        ) = self.step_arcface(batch)
         acc = self.train_acc(preds=preds_4cls, target=target_4cls)
 
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=False)
-        self.log("train/loss_4cls", loss_4cls, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("train/loss_arcface", loss_arcface, on_step=True, on_epoch=True, prog_bar=True)
+        self.log(
+            "train/loss_4cls", loss_4cls, on_step=True, on_epoch=True, prog_bar=True
+        )
+        self.log(
+            "train/loss_arcface",
+            loss_arcface,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+        )
         self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
         self.log("LearningRate", self.optimizer.param_groups[0]["lr"])
 
@@ -415,13 +428,28 @@ class ColonLitModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         # loss_4cls, preds_4cls, target_4cls = self.step_triplet2(batch)
-        loss, loss_4cls, loss_arcface, preds_4cls, target_4cls, features = self.step_arcface(batch)
+        (
+            loss,
+            loss_4cls,
+            loss_arcface,
+            preds_4cls,
+            target_4cls,
+            features,
+        ) = self.step_arcface(batch)
         # loss, preds_4cls, target_4cls, features = self.step_only_classify(batch)
 
         acc = self.val_acc(preds_4cls, target_4cls)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/loss_4cls", loss_4cls, on_step=True, on_epoch=True, prog_bar=False)
-        self.log("val/loss_arcface", loss_arcface, on_step=True, on_epoch=True, prog_bar=False)
+        self.log(
+            "val/loss_4cls", loss_4cls, on_step=True, on_epoch=True, prog_bar=False
+        )
+        self.log(
+            "val/loss_arcface",
+            loss_arcface,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=False,
+        )
         self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
         # dist_heatmap = get_distmat_heatmap(dist_matrix, target_4cls)
@@ -448,11 +476,20 @@ class ColonLitModule(LightningModule):
         acc = self.val_acc.compute()
         self.val_acc.reset()
         self.val_acc_best.update(acc)
-        self.log("val/acc_best", self.val_acc_best.compute(), on_epoch=True, prog_bar=True)
+        self.log(
+            "val/acc_best", self.val_acc_best.compute(), on_epoch=True, prog_bar=True
+        )
 
     def test_step(self, batch, batch_idx):
         # loss_4cls, preds_4cls, target_4cls = self.step_triplet2(batch)
-        loss, loss_4cls, loss_arcface, preds_4cls, target_4cls, features = self.step_arcface(batch)
+        (
+            loss,
+            loss_4cls,
+            loss_arcface,
+            preds_4cls,
+            target_4cls,
+            features,
+        ) = self.step_arcface(batch)
         # loss, preds_4cls, target_4cls, features = self.step_only_classify(batch)
 
         acc = self.test_acc(preds_4cls, target_4cls)
@@ -507,7 +544,9 @@ class ColonLitModule(LightningModule):
 
     def configure_optimizers(self):
         self.optimizer = torch.optim.Adam(
-            self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay
+            self.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay,
         )
         self.scheduler = self.get_scheduler()
         if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -530,7 +569,10 @@ class ColonLitModule(LightningModule):
                 eps=self.hparams.eps,
             ),
             "CosineAnnealingLR": torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, T_max=self.hparams.t_max, eta_min=self.hparams.min_lr, last_epoch=-1
+                self.optimizer,
+                T_max=self.hparams.t_max,
+                eta_min=self.hparams.min_lr,
+                last_epoch=-1,
             ),
             "CosineAnnealingWarmRestarts": torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
@@ -539,8 +581,12 @@ class ColonLitModule(LightningModule):
                 eta_min=self.hparams.min_lr,
                 last_epoch=-1,
             ),
-            "StepLR": torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=200, gamma=0.1),
-            "ExponentialLR": torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.95),
+            "StepLR": torch.optim.lr_scheduler.StepLR(
+                self.optimizer, step_size=200, gamma=0.1
+            ),
+            "ExponentialLR": torch.optim.lr_scheduler.ExponentialLR(
+                self.optimizer, gamma=0.95
+            ),
             "None": torch.optim.lr_scheduler.LambdaLR(
                 self.optimizer, lr_lambda=lambda epoch: 1**epoch
             ),

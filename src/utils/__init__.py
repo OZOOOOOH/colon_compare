@@ -94,7 +94,9 @@ def print_config(
     quee = []
 
     for field in print_order:
-        quee.append(field) if field in config else log.info(f"Field '{field}' not found in config")
+        quee.append(field) if field in config else log.info(
+            f"Field '{field}' not found in config"
+        )
 
     for field in config:
         if field not in quee:
@@ -176,7 +178,7 @@ def finish(
             wandb.finish()
 
 
-def bring_dataset_csv(datatype, stage=None):
+def bring_colon_dataset_csv(datatype, stage=None):
     # Directories
     path = f"/home/compu/jh/data/colon_tma/{datatype}/"
 
@@ -198,7 +200,7 @@ def bring_dataset_colontest2_csv(stage=None):
     return df_train, df_val
 
 
-def bring_gastirc_dataset_csv(stage=None):
+def bring_gastric_dataset_csv(stage=None):
     # Directories
     path = "/home/compu/jh/data/gastric/"
 
@@ -218,7 +220,7 @@ def get_shuffled_label(x, y):
     """get shuffled label from x and y
 
     1) shuffle the pair (x,y)
-    2) get the shuffled index and targets
+    2) get the shuffled indices and targets
 
     """
     pair = list(enumerate(list(pair) for pair in zip(x, y)))
@@ -232,58 +234,88 @@ def get_shuffled_label(x, y):
     return indices, shuffle_y
 
 
-def calculate_score(n, r, class_score):
-    """ calculate voting score
-    r is the compare result (0: >, 1: =, 2: <)
-
-
+def cal_relative(n, r, class_score):
     """
-    if r == 0:  # bigger
-        score = 1 / (3 - n)
+    calculate voting score relatively
 
+    r: the compare result (0: >, 1: =, 2: <)
+    n: the class of data
+
+    This method considers the relative value
+    ex) if r==0 & n==0, then there are 3 classes (1,2,3) that is higher than 0
+        so add 1/3 for each class
+        if r==2 & n==2, then there are 2 classes(0,1) that is lower than 2 
+        so add 1/2 for each class
+    """
+    if r == 0: 
+        score = 1 / (3 - n)
         for idx in range(n + 1, 4):
             class_score[idx] += score
-    elif r == 1:  # same
+        return class_score
+    if r == 1:
         class_score[n] += 1
-    else:  # smaller
+        return class_score
+    if r == 2:
         score = 1 / n
         for idx in range(n):
             class_score[idx] += score
+        return class_score
 
-    return class_score
 
+def cal_absolute(n, r, class_score):
+    """
+    calculate voting score absolutely
 
-def calculate_score_all(n, r, class_score):
-    if r == 0:  # bigger
+    r: the compare result (0: >, 1: =, 2: <)
+    n: the class of data
+
+    This method considers the absolute value
+    
+    add 1 to the class that satisfy the condition        
+    """
+    if r == 0:
         for idx in range(n + 1, 4):
             class_score[idx] += 1
-    elif r == 1:  # same
+        return class_score
+    if r == 1:
         class_score[n] += 1
-    else:  # smaller
+        return class_score
+    if r == 2:
         for idx in range(n):
             class_score[idx] += 1
-    return class_score
+        return class_score
 
-
-def vote_results(results: List):
+def vote_results(results: List, way):
 
     class_score = [0] * 4
     # class_score[4] is other case
-    for r0, r1, r2, r3 in zip(results[0], results[1], results[2], results[3]):
+    if way=='absolute':
 
-        class_score = calculate_score_all(0, r0, class_score)
-        class_score = calculate_score_all(1, r1, class_score)
-        class_score = calculate_score_all(2, r2, class_score)
-        class_score = calculate_score_all(3, r3, class_score)
+        for r0, r1, r2, r3 in zip(results[0], results[1], results[2], results[3]):
 
-    return class_score
+            class_score = cal_absolute(0, r0, class_score)
+            class_score = cal_absolute(1, r1, class_score)
+            class_score = cal_absolute(2, r2, class_score)
+            class_score = cal_absolute(3, r3, class_score)
+
+        return class_score
+    if way=='relative':
+        for r0, r1, r2, r3 in zip(results[0], results[1], results[2], results[3]):
+
+            class_score = cal_relative(0, r0, class_score)
+            class_score = cal_relative(1, r1, class_score)
+            class_score = cal_relative(2, r2, class_score)
+            class_score = cal_relative(3, r3, class_score)
+
 
 
 def dist_indexing(y, shuffle_y, y_idx_groupby, dist_matrix):
     indices = []
     for i, (yV, shuffleV) in enumerate(zip(y, shuffle_y)):
         if yV == shuffleV:
-            indices.append(y_idx_groupby[yV][dist_matrix[i][y_idx_groupby[yV]].argmax()])
+            indices.append(
+                y_idx_groupby[yV][dist_matrix[i][y_idx_groupby[yV]].argmax()]
+            )
         elif yV > shuffleV:
             flatten_ = reduce(lambda a, b: a + b, y_idx_groupby[:yV])
             indices.append(flatten_[dist_matrix[i][flatten_].argmin()])
@@ -389,7 +421,9 @@ def KMeans(x, K=10, Niter=10, verbose=True):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         end = time.time()
-        print(f"K-means for the Euclidean metric with {N:,} points in dimension {D:,}, K = {K:,}:")
+        print(
+            f"K-means for the Euclidean metric with {N:,} points in dimension {D:,}, K = {K:,}:"
+        )
         print(
             "Timing for {} iterations: {:.5f}s = {} x {:.5f}s\n".format(
                 Niter, end - start, Niter, (end - start) / Niter
@@ -398,6 +432,23 @@ def KMeans(x, K=10, Niter=10, verbose=True):
 
     return cl, c
 
+def bring_kmeans_trained_feature(features, targets, preds):
+    dtype = torch.float32
+    device_id = "cuda:4"
+    feature_by_cls = [
+        features[np.where((targets == i) & (preds == i))] for i in range(4)
+    ]
+    K = 10
+    x = [
+        torch.from_numpy(feature_by_cls[i]).type(dtype).to(device_id)
+        for i in range(4)
+    ]
+    centroids = []
+    for i in range(4):
+        _, c = KMeans(x[i], K, verbose=False)
+        centroids.append(c)
+    centroids = [tensor2np(centroids[i]) for i in range(4)]
+    return centroids
 
 def KMeans_cosine(x, K=10, Niter=10, verbose=True):
     """Implements Lloyd's algorithm for the Cosine similarity metric."""
@@ -432,7 +483,9 @@ def KMeans_cosine(x, K=10, Niter=10, verbose=True):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         end = time.time()
-        print(f"K-means for the cosine similarity with {N:,} points in dimension {D:,}, K = {K:,}:")
+        print(
+            f"K-means for the cosine similarity with {N:,} points in dimension {D:,}, K = {K:,}:"
+        )
         print(
             "Timing for {} iterations: {:.5f}s = {} x {:.5f}s\n".format(
                 Niter, end - start, Niter, (end - start) / Niter
@@ -443,7 +496,9 @@ def KMeans_cosine(x, K=10, Niter=10, verbose=True):
 
 
 class CosineAnnealingWarmUpRestarts(_LRScheduler):
-    def __init__(self, optimizer, T_0, T_mult=1, eta_max=0.1, T_up=0, gamma=1.0, last_epoch=-1):
+    def __init__(
+        self, optimizer, T_0, T_mult=1, eta_max=0.1, T_up=0, gamma=1.0, last_epoch=-1
+    ):
         if T_0 <= 0 or not isinstance(T_0, int):
             raise ValueError(f"Expected positive integer T_0, but got {T_0}")
         if T_mult < 1 or not isinstance(T_mult, int):
@@ -473,7 +528,12 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
             return [
                 base_lr
                 + (self.eta_max - base_lr)
-                * (1 + math.cos(math.pi * (self.T_cur - self.T_up) / (self.T_i - self.T_up)))
+                * (
+                    1
+                    + math.cos(
+                        math.pi * (self.T_cur - self.T_up) / (self.T_i - self.T_up)
+                    )
+                )
                 / 2
                 for base_lr in self.base_lrs
             ]
@@ -491,9 +551,13 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
                 self.T_cur = epoch % self.T_0
                 self.cycle = epoch // self.T_0
             else:
-                n = int(math.log((epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult))
+                n = int(
+                    math.log((epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult)
+                )
                 self.cycle = n
-                self.T_cur = epoch - self.T_0 * (self.T_mult**n - 1) / (self.T_mult - 1)
+                self.T_cur = epoch - self.T_0 * (self.T_mult**n - 1) / (
+                    self.T_mult - 1
+                )
                 self.T_i = self.T_0 * self.T_mult ** (n)
         else:
             self.T_i = self.T_0
@@ -510,7 +574,9 @@ def triplet_margin_with_distance_loss(
     positive: torch.Tensor,
     negative: torch.Tensor,
     *,
-    distance_function: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+    distance_function: Optional[
+        Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+    ] = None,
     margin: float = 1.0,
     swap: bool = False,
     reduction: str = "mean",
@@ -524,7 +590,9 @@ def triplet_margin_with_distance_loss(
             "functions requiring Callables cannot be scripted."
         )
 
-    distance_function = distance_function if distance_function is not None else pairwise_distance
+    distance_function = (
+        distance_function if distance_function is not None else pairwise_distance
+    )
 
     positive_dist = distance_function(anchor, positive)
     negative_dist = distance_function(anchor, negative)
@@ -614,7 +682,9 @@ class TripletLossWithGL(nn.Module):
         n = inputs.size(0)
 
         # Make a pairwise distance matrix
-        dist = torch.cdist(inputs, inputs, 2, compute_mode="donot_use_mm_for_euclid_dist")
+        dist = torch.cdist(
+            inputs, inputs, 2, compute_mode="donot_use_mm_for_euclid_dist"
+        )
         # Make a relationship mask based on the anchor
         mask_eq = torch.mul(targets.expand(n, n).eq(targets.expand(n, n).t()), 1)  # =
         mask_gt = torch.mul(targets.expand(n, n).gt(targets.expand(n, n).t()), 2)  # <

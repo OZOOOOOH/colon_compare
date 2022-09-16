@@ -50,9 +50,6 @@ class SaveFeaturesLitModule(LightningModule):
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(256, 3),
         )
-        # discriminator 구조
-        # 레이어 - 드롭아웃 - 레이어
-        # 512 512 4 3
 
     def forward(self, x):  # 4 classification
         return self.discriminator_layer1(

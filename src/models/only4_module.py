@@ -54,7 +54,9 @@ class Classify4LitModule(LightningModule):
         # self.cnt = SumMetric()
 
     def get_features(self, x):
-        # get features from model
+        """get features from timm models
+
+        """
         features = self.model.forward_features(x.float())
         features = self.model.forward_head(features, pre_logits=True)
         return features

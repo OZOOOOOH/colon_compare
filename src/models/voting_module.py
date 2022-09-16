@@ -13,11 +13,17 @@ from src.datamodules.harvard_datamodule import HarvardDataset_pd
 from src.datamodules.colon_datamodule import ColonDataset
 from src.datamodules.gastric_datamodule import GastricDataset
 
-from src.utils import vote_results, get_shuffled_label
 import copy
 from scipy.stats import entropy
 import operator
-from src.utils import vote_results, get_shuffled_label, get_confmat, tensor2np, KMeans
+from src.utils import (
+    vote_results,
+    get_shuffled_label,
+    get_confmat,
+    tensor2np,
+    KMeans,
+    bring_kmeans_trained_feature,
+)
 import wandb
 
 
@@ -25,19 +31,9 @@ class VotingLitModule(LightningModule):
     def __init__(
         self,
         lr: float = 1e-4,
-        weight_decay: float = 0.0005,
-        t_max: int = 20,
-        min_lr: int = 1e-6,
-        T_0=15,
-        T_mult=2,
-        eta_min=1e-6,
         name="vit_base_patch16_224",
         pretrained=True,
         scheduler="ReduceLROnPlateau",
-        factor=0.5,
-        patience=5,
-        eps=1e-08,
-        loss_weight=0.5,
         threshold=0.8,
         num_sample=10,
         key="ent",
@@ -45,7 +41,7 @@ class VotingLitModule(LightningModule):
         decide_by_total_probs=False,
         weighted_sum=False,
         module_type="voting",
-        seed=123
+        seed=123,
     ):
         super().__init__()
         self.save_hyperparameters(logger=False)
@@ -53,36 +49,40 @@ class VotingLitModule(LightningModule):
         self.model = timm.create_model(
             self.hparams.name, pretrained=self.hparams.pretrained, num_classes=4
         )
-        self.discriminator_layer1 = nn.Sequential(
-            nn.Linear(self.model.classifier.in_features, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 4),
-        ) if 'net' in self.hparams.name else nn.Sequential(
-            nn.Linear(self.model.head.in_features, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 4),
+        self.discriminator_layer1 = (
+            nn.Sequential(
+                nn.Linear(self.model.classifier.in_features, 512),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(512, 256),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(256, 4),
+            )
+            if "net" in self.hparams.name
+            else nn.Sequential(
+                nn.Linear(self.model.head.in_features, 512),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(512, 256),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(256, 4),
+            )
         )
-        self.discriminator_layer2 = nn.Sequential(
-            nn.Linear(self.model.classifier.in_features*2, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 3),
-        ) if 'net' in self.hparams.name else nn.Sequential(
-            nn.Linear(self.model.head.in_features*2, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 3),
+        self.discriminator_layer2 = (
+            nn.Sequential(
+                nn.Linear(self.model.classifier.in_features * 2, 512),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(512, 256),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(256, 3),
+            )
+            if "net" in self.hparams.name
+            else nn.Sequential(
+                nn.Linear(self.model.head.in_features * 2, 512),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(512, 256),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(256, 3),
+            )
         )
-
-        # discriminator 구조
-        # 레이어 - 드롭아웃 - 레이어
-        # 512 512 4 3
 
         self.criterion = torch.nn.CrossEntropyLoss()
         self.test_acc = Accuracy()
@@ -97,10 +97,18 @@ class VotingLitModule(LightningModule):
     def get_features(self, x):
         """get features from timm models
 
-        Since densenet code is quite different from vit models, the extract part is different        
+        Since densenet code is quite different from vit models, the extract part is different
         """
-        features = self.model.global_pool(self.model.forward_features(x.float())) if 'densenet' in self.hparams.name else self.model.forward_features(x.float())
-        features = features if 'densenet' in self.hparams.name else self.model.forward_head(features, pre_logits=True)
+        features = (
+            self.model.global_pool(self.model.forward_features(x.float()))
+            if "densenet" in self.hparams.name
+            else self.model.forward_features(x.float())
+        )
+        features = (
+            features
+            if "densenet" in self.hparams.name
+            else self.model.forward_head(features, pre_logits=True)
+        )
         return features
 
     def get_comparison_list(self, origin, shuffle):
@@ -121,8 +129,7 @@ class VotingLitModule(LightningModule):
         return torch.tensor(comparison, device=self.device)
 
     def shuffle_batch(self, x, y):
-        """shuffle batch and get comparison and shuffled targets
-        """
+        """shuffle batch and get comparison and shuffled targets"""
 
         indices, shuffle_y = get_shuffled_label(x, y)
         comparison = self.get_comparison_list(y, shuffle_y)
@@ -131,6 +138,8 @@ class VotingLitModule(LightningModule):
 
     def get_convinced(self, x, dataloader):
         """get data which max_probs is bigger than 0.9 and prediction is correct
+
+        max_probs: Maximum of the classification probability values
 
         """
         convinced = []
@@ -153,8 +162,7 @@ class VotingLitModule(LightningModule):
         return convinced
 
     def check_which_dataset(self):
-        """check which dataset it is
-        """
+        """check which dataset it is"""
         dataset_name = str(self.trainer.datamodule.__class__).lower()
         if "ubc" in dataset_name:
             return "ubc"
@@ -204,60 +212,90 @@ class VotingLitModule(LightningModule):
             return UbcDataset_pd
 
     def bring_trained_feature(self, mode):
+        """
+        bring trained features, predictions, targets from a npy file
+
+        There are 3 options
+
+        K: numbers of samples
+
+        - 1) random
+
+            randomly select K features by the condition
+
+            condition: 4 classification prediction is correct
+
+        - 2) trust
+
+            randomly select K features by the condition
+
+            condition: 4 classification prediction is correct and the max_probs is bigger than 0.9
+
+        - 3) kmeans
+
+            randomly select K features by the condition
+
+            condition: K features that is centroids in the Kmeans method
+
+        return value : a list of features which index number is same as the class number
+
+        ex) list[0] is class 0 features, list[1] is class 1 features ...
+
+        """
         path = "/home/compu/jh/data/voting"
         name = f"{self.trainer.datamodule.__class__.__name__.lower()[:-10]}_{self.hparams.name}_{self.trainer.datamodule.hparams.data_ratio}_seed_{self.hparams.seed}.npy"
         features = np.load(f"{path}/features/{name}")
         preds = np.load(f"{path}/preds/{name}")
         targets = np.load(f"{path}/targets/{name}")
+
         if mode == "random":
             random_idxs = [
                 np.random.choice(
-                    np.where((preds == i)&(targets == i))[0],
+                    np.where((preds == i) & (targets == i))[0],
                     self.hparams.num_sample,
                     replace=False,
                 )
                 for i in range(4)
             ]
-        elif mode == "trust":
+            return [features[random_idxs[i]] for i in range(4)]
+
+        if mode == "trust":
             max_probs = np.load(f"{path}/max_probs/{name}")
             random_idxs = [
                 np.random.choice(
-                    np.where((preds == i)&(max_probs > 0.9)&(targets == i))[0],
+                    np.where((preds == i) & (max_probs > 0.9) & (targets == i))[0],
                     self.hparams.num_sample,
                     replace=False,
                 )
                 for i in range(4)
             ]
-        elif mode=="kmeans":
-            return self.bring_kmeans_trained_feature(features,targets,preds)
+            return [features[random_idxs[i]] for i in range(4)]
 
-        return [features[random_idxs[i]] for i in range(4)]
+        if mode == "kmeans":
 
-    def bring_kmeans_trained_feature(self,features,targets,preds):
-        dtype = torch.float32 
-        device_id = "cuda:4" 
-        feature_by_cls=[features[np.where((targets==i)&(preds==i))] for i in range(4)]
-        K = 10
-        x = [torch.from_numpy(feature_by_cls[i]).type(dtype).to(device_id) for i in range(4)]
-        centroids=[]
-        for i in range(4):
-            _,c=KMeans(x[i], K,verbose=False)
-            centroids.append(c)
-        centroids=[tensor2np(centroids[i]) for i in range(4)]
-        return centroids
+            return bring_kmeans_trained_feature(features, targets, preds)
 
     def bring_random_trained_data(self, x):
+        """
+        get the trained data
+        This function starts from the dataset setup to filtering every batch
+        So it takes a long time
+        """
         self.trainer.datamodule.setup()
         train_img_path, train_img_labels, data_type = self.get_trained_dataset()
         CustomDataset = self.get_dataclass(data_type)
         random_idx_labels = [
             np.random.choice(
-                np.where(train_img_labels == i)[0], self.hparams.num_sample, replace=False
+                np.where(train_img_labels == i)[0],
+                self.hparams.num_sample,
+                replace=False,
             )
             for i in range(4)
         ]
         random_10_train_paths = [train_img_path[random_idx_labels[i]] for i in range(4)]
-        random_10_train_labels = [train_img_labels[random_idx_labels[i]] for i in range(4)]
+        random_10_train_labels = [
+            train_img_labels[random_idx_labels[i]] for i in range(4)
+        ]
 
         df = [
             pd.DataFrame(
@@ -308,7 +346,11 @@ class VotingLitModule(LightningModule):
         train_labels = [train_img_labels[idx_labels[i]] for i in range(4)]
         df = [
             pd.DataFrame(
-                {"path": train_paths[i], "label": train_labels[i], "class": train_labels[i]}
+                {
+                    "path": train_paths[i],
+                    "label": train_labels[i],
+                    "class": train_labels[i],
+                }
             )
             for i in range(4)
         ]
@@ -326,21 +368,22 @@ class VotingLitModule(LightningModule):
 
         return [self.get_convinced(x, dataloaders[i]) for i in range(4)]
 
-    def compare_test_with_trained(self, idx, features, trained_features):
-        """compare the uncertain sample with trained data by class
-        
-        1) concat uncertain sample's feature and trained data features
-        2) concat features go to discriminator_layer2
+    def compare_test_with_trained(self, feature, trained_features):
+        """compare the uncertain data with trained data by class
 
-        return results by class
+        1) concatenate uncertain data feature and trained data features
+        2) The concatenated features go to discriminator_layer2
+
+        return value:
+        comparison results by class
 
         """
         result_list = []
         for trained_feature in trained_features:
             concat_features = torch.cat(
                 (
-                    features[idx].unsqueeze(0),
-                    torch.from_numpy(trained_feature).type_as(features[idx]).unsqueeze(0),
+                    feature.unsqueeze(0),
+                    torch.from_numpy(trained_feature).type_as(feature).unsqueeze(0),
                 ),
                 dim=1,
             )
@@ -349,63 +392,90 @@ class VotingLitModule(LightningModule):
             result_list.append(preds_compare)
         return torch.cat(result_list)
 
-    def predict_using_voting(
+    def voting(
         self,
-        entropy_4cls,
-        max_probs_4cls,
+        entropies,
+        max_probs,
         features,
-        total_trained_features,
-        probs_4cls,
-        preds_4cls,
+        trained_features,
+        probs,
+        preds,
         y,
     ):
+        """
+        voting function
+
+        1) get the threshold key value (entropy or probability)
+        2) Check whether the threshold condition is satisfied
+            (a) if the key value is entropy, then the condition is "value > threshold"
+            (b) if the key value is probability, then the condition is "value < threshold"
+        3) If satisfied, go to compare_test_with_trained function and we get the comparison results
+                         and calculate the comparison results by the calcluation method (relative or absolute)
+        4) There are 3 options to get optimal class by the voting method
+            (A) Weighted sum
+            (B) Total probability
+            (C) None (do nothing to vote score)
+        5) switch the original prediction by the classifer to new prediction by the voting method
+        """
         cnt_correct_diff = 0
         ops = {"ent": operator.gt, "prob": operator.lt}
         # gt: > , lt: <
-        threshold_key = entropy_4cls if self.hparams.key == "ent" else max_probs_4cls.values
+        threshold_key = entropies if self.hparams.key == "ent" else max_probs.values
         # get key data by key
         for idx, value in enumerate(threshold_key):
             if ops[self.hparams.key](value, self.hparams.threshold):
                 # if key=='ent' --> value > threshold
                 # if key=='prob' --> value < threshold
                 results = [
-                    self.compare_test_with_trained(idx, features, total_trained_features[i])
+                    self.compare_test_with_trained(features[idx], trained_features[i])
                     for i in range(4)
                 ]
-                # compare train imgs with test imgs // batch size
-                vote_score = vote_results(results)  # vote_score
+                vote_score = vote_results(results, way="relative")  # vote_score
 
-                if self.hparams.weighted_sum:
+                if self.hparams.weighted_sum or self.hparams.decide_by_total_probs:
                     total_score = sum(vote_score)
-                    prob_vote = np.array(
-                        [i / total_score for i in vote_score]
-                    )  # make vote_socre to probability
-                    vote_cls = self.get_vote_cls_by_weighted_sum(
-                        entropy_4cls, probs_4cls, idx, prob_vote
-                    )
-                elif self.hparams.decide_by_total_probs:
-                    total_score = sum(vote_score)
-                    prob_vote = np.array(
-                        [i / total_score for i in vote_score]
-                    )  # make vote_socre to probability
-
-                    vote_cls = self.get_vote_cls_by_total_probs(probs_4cls, idx, prob_vote)
+                    prob_vote = np.array([i / total_score for i in vote_score])
+                    if self.hparams.weighted_sum:
+                        vote_cls = self.get_vote_cls_by_weighted_sum(
+                            entropies, probs, idx, prob_vote
+                        )
+                    elif self.hparams.decide_by_total_probs:
+                        vote_cls = self.get_vote_cls_by_total_probs(
+                            probs, idx, prob_vote
+                        )
                 else:
                     vote_cls = np.argmax(vote_score)
 
-                if tensor2np(preds_4cls)[idx] != vote_cls and vote_cls == y[idx]:
+                if tensor2np(preds)[idx] != vote_cls and vote_cls == y[idx]:
                     cnt_correct_diff += 1
                 # This is for the counting that the vote_label is the same as the true label, but differnt as predict label
-                preds_4cls[idx] = torch.Tensor([vote_cls]).type_as(y)
-        return cnt_correct_diff, preds_4cls
+                preds[idx] = torch.Tensor([vote_cls]).type_as(y)
+        return cnt_correct_diff, preds
 
     def get_vote_cls_by_total_probs(self, probs_4cls, idx, prob_vote):
-        # add probability of vote and original probs_4cls
-        # divide 2 (1+1)
+        """
+                        P(4classification) + P(vote)
+        vote score = ------------------------------------
+                                        2
+        """
         add_probs_4cls_vote = (tensor2np(probs_4cls[idx]) + prob_vote) / 2
+
         return np.argmax(add_probs_4cls_vote)
 
-    def get_vote_cls_by_weighted_sum(self, entropy_4cls, probs_4cls, idx, prob_vote, vote_cnt):
+    def get_vote_cls_by_weighted_sum(
+        self, entropy_4cls, probs_4cls, idx, prob_vote, vote_cnt
+    ):
+        """
+                                            e**(-entropy(4classification))
+        weight_4classification = ---------------------------------------------------------
+                                    e**(-entropy(4classification)) + e**(-entropy(vote))
+
+                                     e**(-entropy(vote))
+        weight_vote =  -------------------------------------------------------
+                        e**(-entropy(4classification)) + e**(-entropy(vote))
+
+        vote score = weight_4classification * P(4classification) + weight_vote * P(vote)
+        """
         e_4cls, e_vote = entropy_4cls[idx], entropy(prob_vote)
         if e_4cls <= e_vote:
             return np.argmax(vote_cnt)
@@ -414,7 +484,7 @@ class VotingLitModule(LightningModule):
         voting_classify = tensor2np(probs_4cls[idx]) * w_4cls + prob_vote * w_vote
         return np.argmax(voting_classify)
 
-    def step_voting(self, batch):
+    def step(self, batch):
         x, y = batch
         features = self.get_features(x)
         logits_4cls = self.discriminator_layer1(features)
@@ -431,12 +501,24 @@ class VotingLitModule(LightningModule):
         #     else self.bring_convinced_trained_data(x)
         # )
         trained_features = self.bring_trained_feature(mode=self.hparams.sampling)
-        cnt_correct_diff, new_preds_4cls = self.predict_using_voting(
-            entropy_4cls, max_probs_4cls, features, trained_features, probs_4cls, preds_4cls, y
+        cnt_correct_diff, new_preds_4cls = self.voting(
+            entropy_4cls,
+            max_probs_4cls,
+            features,
+            trained_features,
+            probs_4cls,
+            preds_4cls,
+            y,
         )
         cnt_diff = sum(x != y for x, y in zip(origin_preds_4cls, new_preds_4cls))
-        # print(f'length of preds : {len(origin_preds_4cls)} // The number of changed : {cnt_diff}')
-        return loss_4cls, origin_preds_4cls, new_preds_4cls, y, cnt_diff, cnt_correct_diff
+        return (
+            loss_4cls,
+            origin_preds_4cls,
+            new_preds_4cls,
+            y,
+            cnt_diff,
+            cnt_correct_diff,
+        )
 
     def training_step(self, batch, batch_idx):
         pass
@@ -445,6 +527,10 @@ class VotingLitModule(LightningModule):
         pass
 
     def test_step(self, batch, batch_idx):
+        """
+        orgin_acc: Accuracy that do not use voting method
+        new_acc: Accuracy that do use voting method
+        """
 
         (
             loss,
@@ -453,7 +539,7 @@ class VotingLitModule(LightningModule):
             target_4cls,
             cnt_diff,
             cnt_correct_diff,
-        ) = self.step_voting(batch)
+        ) = self.step(batch)
         self.confusion_matrix(new_preds_4cls, target_4cls)
         self.f1_score(new_preds_4cls, target_4cls)
         self.cohen_kappa(new_preds_4cls, target_4cls)
@@ -463,6 +549,7 @@ class VotingLitModule(LightningModule):
         self.log("test/loss", loss, on_step=False, on_epoch=True)
         self.log("test/origin_acc", origin_acc, on_step=False, on_epoch=True)
         self.log("test/new_acc", new_acc, on_step=False, on_epoch=True)
+
         return {
             "loss": loss,
             "origin_acc": origin_acc,
@@ -475,22 +562,32 @@ class VotingLitModule(LightningModule):
         }
 
     def test_epoch_end(self, outputs):
+        """
+        cnt_diff: The number of changes compared to previous predictions
+        cnt_correct_diff: The number of correct answers in cnt_diff
+        """
 
         cm = self.confusion_matrix.compute()
         f1 = self.f1_score.compute()
         qwk = self.cohen_kappa.compute()
-        p = get_confmat(cm)
-        self.logger.experiment.log({"test/conf_matrix": wandb.Image(p)})
+        plot_img = get_confmat(cm)
+        self.logger.experiment.log({"test/conf_matrix": wandb.Image(plot_img)})
 
         self.log("test/f1_macro", f1, on_step=False, on_epoch=True)
         self.log("test/wqKappa", qwk, on_step=False, on_epoch=True)
 
-        cnt_diff = sum(i["cnt_diff"] for i in outputs)
+        cnt_diff = sum(i["cnt_diff"] for i in outputs).sum()
         cnt_correct_diff = sum(i["cnt_correct_diff"] for i in outputs)
-        cnt_diff = cnt_diff.sum()
-        self.log("test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx="sum")
+
         self.log(
-            "test/cnt_correct_diff", cnt_correct_diff, on_epoch=True, on_step=False, reduce_fx="sum"
+            "test/cnt_diff", cnt_diff, on_epoch=True, on_step=False, reduce_fx="sum"
+        )
+        self.log(
+            "test/cnt_correct_diff",
+            cnt_correct_diff,
+            on_epoch=True,
+            on_step=False,
+            reduce_fx="sum",
         )
         self.test_acc.reset()
         self.confusion_matrix.reset()

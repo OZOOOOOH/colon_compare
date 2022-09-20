@@ -74,6 +74,7 @@ class NewVotingLitModule(VotingLitModule):
 
         repeat 2), 3) until the condition is satisfied
 
+        condition: the most highest value is 'same'
 
         B' --> change by the comparison
 

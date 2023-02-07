@@ -13,7 +13,9 @@
 
 ## Description
 
-What it does
+![](https://www.cancer.gov/sites/g/files/xnrzdm211/files/styles/cgov_article/public/cgov_contextual_image/2022-12/tumor%20grade.jpg?itok=UMBhYthV)
+
+**This is an image classification method that can be applied to graded data such as the stage of cancer.**
 
 ## How to run
 
@@ -21,8 +23,8 @@ Install dependencies
 
 ```bash
 # clone project
-git clone https://github.com/YourGithubName/your-repo-name
-cd your-repo-name
+git clone https://github.com/OZOOOOOH/colon_compare
+cd colon_compare
 
 # [OPTIONAL] create conda environment
 conda create -n myenv python=3.8

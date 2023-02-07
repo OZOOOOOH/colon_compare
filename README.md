@@ -15,7 +15,18 @@
 
 ![](https://www.cancer.gov/sites/g/files/xnrzdm211/files/styles/cgov_article/public/cgov_contextual_image/2022-12/tumor%20grade.jpg?itok=UMBhYthV)
 
-**This is an image classification method that can be applied to graded data such as the stage of cancer.**
+Graded Image Classification is a multi-task learning approach for improving image classification performance when working with graded data, such as the stage of cancer.
+
+In this method, a Vision Transformer (ViT) network is trained on graded training data, learning both image classification and comparison of grades.
+
+At the test phase, the approach utilizes a voting method based on comparison information to make the final prediction, resulting in improved performance.
+
+The approach has been tested and shows improved performance compared to traditional image classification methods using Convolutional Neural Networks (CNNs).
+
+
+
+
+
 
 ## How to run
 
